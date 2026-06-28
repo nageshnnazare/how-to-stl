@@ -8,19 +8,75 @@
 #include <initializer_list>  // for initializer_list
 #include <utility>      // for move, forward
 
-/**
- * @brief Custom implementation of std::vector
- * 
- * Vector is a dynamic array that automatically manages its memory.
- * 
- * Key characteristics:
- * - Dynamic memory allocation with geometric growth
- * - Automatic memory management (RAII)
- * - Random access iterators
- * - Efficient insertion/deletion at the end
- * - Copy and move semantics
- * - Exception safety
- */
+// ============================================================================
+//  Vector<T> -- a hand-rolled std::vector (contiguous dynamic array)
+// ============================================================================
+//
+// WHAT IT IS
+// ----------
+// A Vector is a growable array. Elements live back-to-back in a single block
+// of heap memory, so indexing is a pointer addition (O(1)) and iteration is
+// cache-friendly. When the block fills up, we allocate a bigger block, move
+// the elements over, and free the old one.
+//
+// THE THREE FIELDS
+// ----------------
+// We track exactly three things:
+//
+//     data_     -> pointer to the heap block (or nullptr when empty)
+//     size_     -> how many elements are actually CONSTRUCTED
+//     capacity_ -> how many elements the block COULD hold before regrowing
+//
+// The invariant 0 <= size_ <= capacity_ always holds.
+//
+// MEMORY LAYOUT (size_ = 3, capacity_ = 5)
+// ----------------------------------------
+//
+//     Vector object (on stack)            Heap block (capacity_ * sizeof(T))
+//     ┌───────────────────┐               ┌─────┬─────┬─────┬─────┬─────┐
+//     │ data_      ●──────┼──────────────▶│  A  │  B  │  C  │  ?  │  ?  │
+//     │ size_      = 3    │               └─────┴─────┴─────┴─────┴─────┘
+//     │ capacity_  = 5    │                 0     1     2     3     4
+//     └───────────────────┘               └──── constructed ───┘└ raw ┘
+//                                            (live objects)     (uninitialized
+//                                                                storage, NOT
+//                                                                yet objects)
+//
+// Slots [0, size_)        hold live T objects.
+// Slots [size_, capacity_) are RAW BYTES -- allocated but not yet a T. We must
+// never read them and must use placement-new before treating them as a T.
+//
+// WHY ::operator new INSTEAD OF new T[n]?
+// ---------------------------------------
+// `new T[n]` would default-construct every element immediately, which is wrong:
+// capacity is meant to be *reserved* space, not *constructed* space. So we
+// separate the two STL steps explicitly:
+//     1. allocate raw storage      -> ::operator new(bytes)   (no constructors)
+//     2. construct an element      -> placement new           (construct_at)
+//     3. destroy an element        -> p->~T()                 (destroy_range)
+//     4. free raw storage          -> ::operator delete       (no destructors)
+//
+// GEOMETRIC GROWTH (why push_back is amortized O(1))
+// --------------------------------------------------
+// When full, capacity doubles (0 -> 1 -> 2 -> 4 -> 8 -> 16 ...). Doubling means
+// that across N push_backs the total copying work is N + N/2 + N/4 + ... < 2N,
+// i.e. O(N) total => O(1) *amortized* per push_back, even though an individual
+// push_back that triggers a reallocation is O(N).
+//
+//     push_back when size_ == capacity_:
+//
+//     old: [A][B]                (cap 2, full)
+//           │  │   move
+//           ▼  ▼
+//     new: [A][B][ ][ ]          (cap 4)  then write C -> [A][B][C][ ]
+//
+// Key characteristics:
+// - Contiguous storage, random access in O(1)
+// - Geometric (doubling) growth => amortized O(1) push_back
+// - RAII: the destructor frees memory; no manual cleanup needed
+// - Full value semantics: deep copy, cheap move
+// - Strong exception guarantee on most growth operations
+// ============================================================================
 
 template<typename T>
 class Vector {
@@ -37,12 +93,15 @@ public:
     using const_iterator = const T*;
 
 private:
-    T* data_;           // Pointer to array data
-    size_type size_;    // Current number of elements
-    size_type capacity_; // Allocated capacity
+    T* data_;            // points at the heap block, or nullptr if capacity_ == 0
+    size_type size_;     // number of LIVE (constructed) elements: slots [0, size_)
+    size_type capacity_; // number of slots the block can hold before regrowing
 
     /**
-     * @brief Ensure capacity is at least n
+     * @brief Grow to hold at least n elements, but only if we are short.
+     *
+     * Unlike reserve(), this is a no-op when we already have room, so callers
+     * can use it as a cheap "make sure there is space" guard.
      */
     void ensure_capacity(size_type n) {
         if (n > capacity_) {
@@ -51,7 +110,11 @@ private:
     }
 
     /**
-     * @brief Destroy elements in range [first, last)
+     * @brief Run ~T() on every element in [first, last).
+     *
+     * This only destroys objects; it does NOT free the underlying storage.
+     * After this, those slots are raw memory again (back to the "?" state in
+     * the layout diagram above).
      */
     void destroy_range(T* first, T* last) {
         for (T* p = first; p != last; ++p) {
@@ -60,7 +123,12 @@ private:
     }
 
     /**
-     * @brief Construct element at position with args
+     * @brief Turn a raw slot into a live T via placement new.
+     *
+     * `new (p) T(...)` constructs an object *in the memory p already points to*
+     * instead of allocating. This is how we materialise a real object inside a
+     * previously-raw capacity slot. The variadic args make it work for copy,
+     * move, and emplace alike (perfect forwarding).
      */
     template<typename... Args>
     void construct_at(T* p, Args&&... args) {
@@ -314,29 +382,49 @@ public:
     }
 
     /**
-     * @brief Reserve memory for at least n elements
+     * @brief Make sure the block can hold at least n elements (reallocation).
+     *
+     * This is the single place where the storage block actually moves. Every
+     * pointer/iterator/reference into the old block is INVALIDATED afterwards,
+     * because the elements physically relocate to a new address.
+     *
+     * Steps (each numbered below):
+     *
+     *   before:  data_ ─▶ [A][B][C]            (cap 3, full)
+     *
+     *   (1) allocate a fresh, larger raw block:
+     *            new_data ─▶ [ ][ ][ ][ ][ ]   (cap n, all raw)
+     *
+     *   (2) move each old element into the new block (placement new). We MOVE
+     *       rather than copy so that, e.g., a Vector<string> just steals each
+     *       string's buffer instead of duplicating characters:
+     *            new_data ─▶ [A][B][C][ ][ ]
+     *
+     *   (3) destroy the (now moved-from) old elements, then
+     *   (4) free the old raw block, and finally
+     *       repoint data_ at the new block.
      */
     void reserve(size_type n) {
         if (n <= capacity_) {
-            return;
+            return;  // already big enough -- never shrink in reserve()
         }
-        
-        // Allocate new buffer
+
+        // (1) Raw storage only -- no T constructors run here.
         T* new_data = static_cast<T*>(::operator new(n * sizeof(T)));
-        
-        // Move/copy existing elements
+
+        // (2) Relocate existing elements by move-construction.
         for (size_type i = 0; i < size_; ++i) {
             construct_at(new_data + i, std::move(data_[i]));
         }
-        
-        // Destroy old elements
+
+        // (3) Old objects are husks now -- destroy them.
         destroy_range(data_, data_ + size_);
-        
-        // Free old buffer
+
+        // (4) Release the old block (no-op if we were empty).
         if (data_) {
             ::operator delete(data_);
         }
-        
+
         data_ = new_data;
         capacity_ = n;
     }
@@ -394,32 +482,50 @@ public:
     }
 
     /**
-     * @brief Insert element at position
+     * @brief Insert a copy of value before pos; returns iterator to it.
+     *
+     * Inserting in the middle is O(n): everything from pos onward must slide
+     * one slot to the right to open a gap.
+     *
+     *   insert X at index 1 of [A][B][C]:
+     *
+     *       [A][B][C][ ]        (the trailing [ ] is the new capacity slot)
+     *        │  └─┬─┘ ▲
+     *        │    └───┘  shift B,C right by one
+     *       [A][ ][B][C]
+     *           ▲
+     *       [A][X][B][C]        drop X into the gap
+     *
+     * SUBTLETY: the rightmost destination slot (old data_[size_]) is RAW memory,
+     * so it must be filled with construct_at (placement new). Every other
+     * destination already holds a live object, so we move-ASSIGN into it. We
+     * capture `index` before reserve() because reserve() may move the block and
+     * invalidate the incoming `pos` pointer.
      */
     iterator insert(const_iterator pos, const T& value) {
-        size_type index = pos - data_;
-        
+        size_type index = pos - data_;  // remember position as an index, not a pointer
+
         if (size_ == capacity_) {
             size_type new_cap = capacity_ == 0 ? 1 : capacity_ * 2;
-            reserve(new_cap);
+            reserve(new_cap);  // may relocate; that's why we saved `index` above
         }
-        
-        // Shift elements right
+
+        // Shift the tail right by one, walking from the back to avoid overwrites.
         for (size_type i = size_; i > index; --i) {
             if (i == size_) {
-                construct_at(data_ + i, std::move(data_[i - 1]));
+                construct_at(data_ + i, std::move(data_[i - 1]));  // into RAW slot
             } else {
-                data_[i] = std::move(data_[i - 1]);
+                data_[i] = std::move(data_[i - 1]);                // into LIVE slot
             }
         }
-        
-        // Insert new element
+
+        // Place the new value: the gap is live unless we inserted at the very end.
         if (index < size_) {
-            data_[index] = value;
+            data_[index] = value;            // overwrite a live (moved-from) slot
         } else {
-            construct_at(data_ + index, value);
+            construct_at(data_ + index, value);  // index == size_: still raw
         }
-        
+
         ++size_;
         return data_ + index;
     }
@@ -498,15 +604,20 @@ public:
     }
 
     /**
-     * @brief Add element at end
+     * @brief Append a copy of value at the end. Amortized O(1).
+     *
+     * If there is spare capacity we just construct into the next raw slot
+     * (data_ + size_) -- pure O(1). Only when the block is exactly full do we
+     * pay for a reallocation (double the capacity), and geometric doubling makes
+     * that cost average out to O(1) per element across many push_backs.
      */
     void push_back(const T& value) {
         if (size_ == capacity_) {
-            size_type new_cap = capacity_ == 0 ? 1 : capacity_ * 2;
+            size_type new_cap = capacity_ == 0 ? 1 : capacity_ * 2;  // 0->1->2->4->8...
             reserve(new_cap);
         }
-        
-        construct_at(data_ + size_, value);
+
+        construct_at(data_ + size_, value);  // build into the first free slot
         ++size_;
     }
 

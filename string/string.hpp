@@ -8,19 +8,73 @@
 #include <iterator>     // for iterator traits
 #include <cstddef>      // for size_t, ptrdiff_t
 
-/**
- * @brief Custom implementation of std::string
- * 
- * String is a dynamic character array that manages its own memory.
- * 
- * Key characteristics:
- * - Dynamic memory allocation
- * - Automatic memory management (RAII)
- * - Copy and move semantics
- * - Rich set of string operations
- * - Iterator support
- * - SSO (Small String Optimization) for short strings
- */
+// ============================================================================
+//  String -- a hand-rolled std::string (dynamic char sequence + SSO)
+// ============================================================================
+//
+// WHAT IT IS
+// ----------
+// A String is a growable, null-terminated sequence of char. It behaves like
+// std::string: you can append, insert, search, and compare, while the class
+// manages memory for you (RAII). Unlike a raw char*, length and capacity are
+// tracked explicitly and a trailing '\0' is always maintained.
+//
+// THE FOUR FIELDS
+// ---------------
+//
+//     data_        -> pointer to the active character buffer (SSO or heap)
+//     size_        -> number of characters (NOT counting the '\0')
+//     capacity_    -> chars the buffer can hold before regrowing (excl. '\0')
+//     sso_buffer_  -> inline stack buffer used when size_ <= SSO_CAPACITY (15)
+//
+// SSO DETECTION: is_sso() returns true when data_ == sso_buffer_.
+// Invariant: 0 <= size_ <= capacity_, and data_[size_] == '\0' always.
+//
+// MEMORY LAYOUT — SSO STATE (size_ = 5, capacity_ = 15)
+// -------------------------------------------------------
+//
+//     String object (on stack)              Characters live INSIDE the object
+//     ┌──────────────────────────┐          (no heap allocation)
+//     │ data_      ●─────────────┼──┐
+//     │ size_      = 5           │  │
+//     │ capacity_  = 15          │  │       sso_buffer_[16]
+//     │ sso_buffer_┌─────────────┼──┘       ┌───┬───┬───┬───┬───┬───┬─────┐
+//     │            │ H │ e │ l │ l │ o │\0 │ ? │ ? │ ...               │
+//     └────────────┴───┴───┴───┴───┴───┴───┴───┴───┴─────────────────────┘
+//                  0   1   2   3   4   5   6   7        (unused SSO slack)
+//                  └──── size_ = 5 live chars ────┘└─ spare capacity ─┘
+//
+// MEMORY LAYOUT — HEAP STATE (size_ = 30, capacity_ = 30)
+// ---------------------------------------------------------
+//
+//     String object (on stack)              Heap block (capacity_ + 1 bytes)
+//     ┌──────────────────────────┐          ┌───┬───┬── ... ──┬───┬───┐
+//     │ data_      ●─────────────┼─────────▶│ L │ o │ n │ g │...│\0 │
+//     │ size_      = 30          │          └───┴───┴───┴───┴───┴───┘
+//     │ capacity_  = 30          │            0   1   2       29  30
+//     │ sso_buffer_[16] (idle)   │          sso_buffer_ is NOT used; data_
+//     └──────────────────────────┘          points past it to the heap block
+//
+// SSO → HEAP TRANSITION (why reserve/append matter)
+// -------------------------------------------------
+// When size_ would exceed SSO_CAPACITY (15), we allocate a heap buffer,
+// copy the characters across, and repoint data_ away from sso_buffer_.
+//
+//     before (SSO):  data_ ─▶ sso_buffer_  "Hello\0"     (15 cap, no heap)
+//     append 20 chars triggers ensure_capacity:
+//     after (heap):  data_ ─▶ [heap] "Hello + 20 more chars...\0"
+//                    sso_buffer_ sits unused in the object
+//
+// HEAP → SSO (shrink_to_fit when size_ drops to ≤ 15)
+// ---------------------------------------------------
+// shrink_to_fit() can copy back into sso_buffer_ and delete[] the heap block.
+//
+// Key characteristics:
+// - SSO avoids heap for strings ≤ 15 characters (common case)
+// - Null-terminated C-string compatibility via c_str() / data()
+// - Move from heap strings steals the pointer in O(1); SSO moves copy inline
+// - swap() handles all four SSO/heap combinations without leaking
+// ============================================================================
 
 class String {
 public:
@@ -39,26 +93,27 @@ public:
     static constexpr size_type npos = static_cast<size_type>(-1);
 
 private:
-    // Small String Optimization (SSO) threshold
-    static constexpr size_type SSO_CAPACITY = 15;
-    
-    // Data members
-    char* data_;        // Pointer to string data
-    size_type size_;    // Current size (not including null terminator)
-    size_type capacity_; // Allocated capacity (not including null terminator)
-    
-    // Small buffer for SSO
-    char sso_buffer_[SSO_CAPACITY + 1];
-    
+    static constexpr size_type SSO_CAPACITY = 15;  // max chars stored inline (no heap)
+
+    char* data_;              // active buffer: points at sso_buffer_ (SSO) or heap block
+    size_type size_;          // character count (excludes trailing '\0')
+    size_type capacity_;      // max chars before regrow (excludes '\0'); 15 when in SSO mode
+
+    char sso_buffer_[SSO_CAPACITY + 1];  // inline storage: SSO_CAPACITY chars + room for '\0'
+
     /**
-     * @brief Check if string is using SSO
+     * @brief True when characters live in sso_buffer_ (no heap allocation).
+     *
+     * We never store a separate "mode" flag — the pointer value IS the mode:
+     *     data_ == sso_buffer_  →  SSO (stack)
+     *     data_ != sso_buffer_  →  heap
      */
     bool is_sso() const {
         return data_ == sso_buffer_;
     }
-    
+
     /**
-     * @brief Ensure capacity is at least n
+     * @brief Grow capacity to at least n if we are short (delegates to reserve).
      */
     void ensure_capacity(size_type n) {
         if (n > capacity_) {
@@ -137,7 +192,17 @@ public:
     }
 
     /**
-     * @brief Move constructor
+     * @brief Move constructor — steal heap buffer or copy SSO inline.
+     *
+     * Two paths depending on the source's storage mode:
+     *
+     *   SSO source:  must COPY (buffer lives inside `other`, can't steal it)
+     *        other.sso_buffer_ ──strcpy──▶ this.sso_buffer_
+     *        this.data_ = sso_buffer_
+     *
+     *   Heap source: STEAL pointer in O(1), reset other to empty SSO
+     *        this.data_  ◀── steal ──  other.data_
+     *        other.data_ = other.sso_buffer_;  other.size_ = 0
      */
     String(String&& other) noexcept : String() {
         if (other.is_sso()) {
@@ -343,7 +408,15 @@ public:
     }
 
     /**
-     * @brief Reserve memory for at least n characters
+     * @brief Reserve at least n characters of capacity (may leave SSO for heap).
+     *
+     * If n <= capacity_, this is a no-op. Otherwise we allocate a new heap
+     * block, strcpy the existing content across, and free the old heap block
+     * (SSO buffer is never delete[]'d).
+     *
+     *   SSO "Hello"  reserve(100):
+     *       new_data ─▶ [Hello\0___________...]  (101 bytes on heap)
+     *       data_ repointed; sso_buffer_ goes idle
      */
     void reserve(size_type n) {
         if (n <= capacity_) {
@@ -364,7 +437,12 @@ public:
     }
 
     /**
-     * @brief Reduce capacity to fit size
+     * @brief Shrink capacity to fit size_; may move heap → SSO.
+     *
+     * Three outcomes:
+     *   (1) already tight or SSO  → no-op
+     *   (2) size_ <= 15 on heap   → strcpy into sso_buffer_, delete[] heap
+     *   (3) size_ > 15 on heap     → realloc exact-size heap block
      */
     void shrink_to_fit() {
         if (capacity_ == size_ || is_sso()) {
@@ -413,6 +491,17 @@ public:
         return *this;
     }
 
+    /**
+     * @brief Append n bytes from s — may trigger SSO → heap transition.
+     *
+     * Steps:
+     *   (1) ensure_capacity(size_ + n)   — may allocate heap if over SSO limit
+     *   (2) memcpy new bytes after data_[size_]
+     *   (3) size_ += n; data_[size_] = '\0'
+     *
+     *   SSO "Hi" + append(" there world"):
+     *       size 2 + 16 = 18 > 15  →  reserve promotes to heap first
+     */
     String& append(const char* s, size_type n) {
         if (n == 0) return *this;
         
@@ -479,6 +568,18 @@ public:
         return *this;
     }
 
+    /**
+     * @brief Insert n bytes at pos — memmove opens a gap, then memcpy fills it.
+     *
+     *   insert "XX" at pos 1 of "ABCDE":
+     *       [A][B][C][D][E][\0]
+     *        └── memmove tail right by 2 ──▶
+     *       [A][ ][ ][B][C][D][E][\0]
+     *           └── memcpy "XX" ──▶
+     *       [A][X][X][B][C][D][E][\0]
+     *
+     * memmove (not memcpy) because source and dest overlap.
+     */
     String& insert(size_type pos, const char* s, size_type n) {
         if (pos > size_) {
             throw std::out_of_range("String::insert: position out of range");
@@ -520,6 +621,13 @@ public:
         return replace(pos, len, str.data_, str.size_);
     }
 
+    /**
+     * @brief Replace [pos, pos+len) with n new bytes — three size cases.
+     *
+     *   same length:  memcpy in place
+     *   shorter:      memcpy replacement, memmove tail left, shrink size_
+     *   longer:       ensure_capacity, memmove tail right, memcpy replacement
+     */
     String& replace(size_type pos, size_type len, const char* s, size_type n) {
         if (pos > size_) {
             throw std::out_of_range("String::replace: position out of range");
@@ -564,7 +672,13 @@ public:
     }
 
     /**
-     * @brief Swap with another string
+     * @brief Exchange contents — four cases for SSO × heap combinations.
+     *
+     *   both SSO:   strcpy swap via temp buffer (both buffers inside objects)
+     *   both heap:  swap data_/capacity_ pointers — O(1), no char copies
+     *   mixed:      copy SSO side to temp, steal heap pointer, strcpy temp
+     *
+     * size_ is swapped last so both strings stay consistent.
      */
     void swap(String& other) noexcept {
         // Handle SSO cases

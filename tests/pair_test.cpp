@@ -1,43 +1,172 @@
+/**
+ * @file pair_test.cpp
+ * @brief Test suite for the Pair (two-field aggregate).
+ */
+
 #include "pair/pair.hpp"
 #include <iostream>
 #include <string>
 
 int main() {
-    std::cout << "=== Pair Test Suite ===\n\n";
-    
-    int passed = 0, total = 10;
-    
-    std::cout << "Test 1: Basic construction... ";
-    { Pair<int, std::string> p(1, "one"); if (p.first == 1 && p.second == "one") { std::cout << "PASSED\n"; ++passed; } else { std::cout << "FAILED\n"; return 1; } }
-    
-    std::cout << "Test 2: make_pair... ";
-    { Pair<int, double> p(2, 3.14); if (p.first == 2 && p.second == 3.14) { std::cout << "PASSED\n"; ++passed; } else { std::cout << "FAILED\n"; return 1; } }
-    
-    std::cout << "Test 3: Copy... ";
-    { Pair<int, int> p1(1, 2); Pair<int, int> p2 = p1; if (p2.first == 1 && p2.second == 2) { std::cout << "PASSED\n"; ++passed; } else { std::cout << "FAILED\n"; return 1; } }
-    
-    std::cout << "Test 4: Equality... ";
-    { Pair<int, int> p1(1, 2); Pair<int, int> p2(1, 2); if (p1 == p2) { std::cout << "PASSED\n"; ++passed; } else { std::cout << "FAILED\n"; return 1; } }
-    
-    std::cout << "Test 5: Inequality... ";
-    { Pair<int, int> p1(1, 2); Pair<int, int> p2(2, 1); if (p1 != p2) { std::cout << "PASSED\n"; ++passed; } else { std::cout << "FAILED\n"; return 1; } }
-    
-    std::cout << "Test 6: Less than... ";
-    { Pair<int, int> p1(1, 2); Pair<int, int> p2(2, 1); if (p1 < p2) { std::cout << "PASSED\n"; ++passed; } else { std::cout << "FAILED\n"; return 1; } }
-    
-    std::cout << "Test 7: Strings... ";
-    { Pair<std::string, int> p("test", 42); if (p.first == "test") { std::cout << "PASSED\n"; ++passed; } else { std::cout << "FAILED\n"; return 1; } }
-    
-    std::cout << "Test 8: Move... ";
-    { Pair<std::string, int> p1(std::string("hello"), 10); Pair<std::string, int> p2 = std::move(p1); if (p2.first == "hello") { std::cout << "PASSED\n"; ++passed; } else { std::cout << "FAILED\n"; return 1; } }
-    
-    std::cout << "Test 9: Assignment... ";
-    { Pair<int, int> p1(1, 2); Pair<int, int> p2; p2 = p1; if (p2.first == 1) { std::cout << "PASSED\n"; ++passed; } else { std::cout << "FAILED\n"; return 1; } }
-    
-    std::cout << "Test 10: Default... ";
-    { Pair<int, int> p; if (p.first == 0 && p.second == 0) { std::cout << "PASSED\n"; ++passed; } else { std::cout << "FAILED\n"; return 1; } }
-    
-    std::cout << "\n" << passed << "/" << total << " tests passed\n";
-    std::cout << "✓ All tests PASSED!\n";
-    return 0;
+    std::cout << "=================================================\n";
+    std::cout << "        Pair Implementation Test Suite          \n";
+    std::cout << "=================================================\n\n";
+
+    int passed = 0, total = 14;
+
+    // Test 1: default construction value-initializes both members
+    std::cout << "Test 1: default construction... ";
+    {
+        Pair<int, int> p;
+        if (p.first != 0 || p.second != 0) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 2: value construction
+    std::cout << "Test 2: value construction... ";
+    {
+        Pair<int, std::string> p(1, "one");
+        if (p.first != 1 || p.second != "one") { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 3: copy construction
+    std::cout << "Test 3: copy construction... ";
+    {
+        Pair<int, int> a(1, 2);
+        Pair<int, int> b = a;
+        if (b.first != 1 || b.second != 2) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 4: copy assignment
+    std::cout << "Test 4: copy assignment... ";
+    {
+        Pair<int, int> a(3, 4), b;
+        b = a;
+        if (b.first != 3 || b.second != 4) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 5: move construction transfers payload
+    std::cout << "Test 5: move construction... ";
+    {
+        Pair<std::string, int> a(std::string("hello"), 10);
+        Pair<std::string, int> b = std::move(a);
+        if (b.first != "hello" || b.second != 10) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 6: equality
+    std::cout << "Test 6: operator==... ";
+    {
+        Pair<int, int> a(1, 2), b(1, 2), c(1, 3);
+        if (!(a == b) || (a == c)) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 7: inequality
+    std::cout << "Test 7: operator!=... ";
+    {
+        Pair<int, int> a(1, 2), b(2, 1);
+        if (!(a != b)) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 8: operator< compares first member first
+    std::cout << "Test 8: less-than (first)... ";
+    {
+        Pair<int, int> a(1, 9), b(2, 0);
+        if (!(a < b)) { std::cout << "FAILED\n"; return 1; }   // 1 < 2 regardless of second
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 9: operator< tiebreaks on second
+    std::cout << "Test 9: less-than (second tiebreak)... ";
+    {
+        Pair<int, int> a(1, 2), b(1, 3);
+        if (!(a < b) || (b < a)) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 10: make_pair deduces types
+    std::cout << "Test 10: make_pair deduction... ";
+    {
+        auto p = make_pair(42, 3.5);
+        if (p.first != 42 || p.second != 3.5) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 11: Pair with std::string member (constructed directly; make_pair with
+    // std:: arguments is intentionally avoided as ADL makes it ambiguous with
+    // std::make_pair).
+    std::cout << "Test 11: string-keyed pair... ";
+    {
+        Pair<std::string, int> p(std::string("key"), 7);
+        if (p.first != "key" || p.second != 7) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 12: heterogeneous types
+    std::cout << "Test 12: mixed types... ";
+    {
+        Pair<char, double> p('x', 1.25);
+        if (p.first != 'x' || p.second != 1.25) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 13: nested pairs
+    std::cout << "Test 13: nested pair... ";
+    {
+        Pair<int, Pair<int, int>> nested(1, Pair<int, int>(2, 3));
+        if (nested.first != 1 || nested.second.first != 2 || nested.second.second != 3) {
+            std::cout << "FAILED\n"; return 1;
+        }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 14: members are mutable
+    std::cout << "Test 14: mutable members... ";
+    {
+        Pair<int, int> p(1, 2);
+        p.first = 10;
+        p.second = 20;
+        if (p.first != 10 || p.second != 20) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    std::cout << "\n=================================================\n";
+    std::cout << "  RESULTS: " << passed << "/" << total << " tests passed\n";
+    std::cout << "=================================================\n";
+    if (passed == total) { std::cout << "\xE2\x9C\x93 All tests PASSED!\n"; return 0; }
+    std::cout << "\xE2\x9C\x97 Some tests FAILED\n";
+    return 1;
 }
+
+/* ===== EXPECTED OUTPUT ============================================
+ * Auto-generated by running this program (see tests/README.md).
+ * ----------------------------------------------------------------------------
+=================================================
+        Pair Implementation Test Suite          
+=================================================
+
+Test 1: default construction... PASSED
+Test 2: value construction... PASSED
+Test 3: copy construction... PASSED
+Test 4: copy assignment... PASSED
+Test 5: move construction... PASSED
+Test 6: operator==... PASSED
+Test 7: operator!=... PASSED
+Test 8: less-than (first)... PASSED
+Test 9: less-than (second tiebreak)... PASSED
+Test 10: make_pair deduction... PASSED
+Test 11: string-keyed pair... PASSED
+Test 12: mixed types... PASSED
+Test 13: nested pair... PASSED
+Test 14: mutable members... PASSED
+
+=================================================
+  RESULTS: 14/14 tests passed
+=================================================
+✓ All tests PASSED!
+ * ============================================================================ */

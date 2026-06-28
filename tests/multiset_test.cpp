@@ -1,11 +1,164 @@
+/**
+ * @file multiset_test.cpp
+ * @brief Test suite for the Multiset (sorted-vector, duplicates allowed).
+ */
+
 #include "multiset/multiset.hpp"
 #include <iostream>
+#include <string>
+
 int main() {
-    Multiset<int> ms = {1, 1, 2, 3, 3, 3};
-    std::cout << "Multiset test: size=" << ms.size() << ", count(3)=" << ms.count(3) << "\n";
-    if (ms.size() == 6 && ms.count(3) == 3) {
-        std::cout << "✓ PASSED\n";
-        return 0;
+    std::cout << "=================================================\n";
+    std::cout << "      Multiset Implementation Test Suite        \n";
+    std::cout << "=================================================\n\n";
+
+    int passed = 0, total = 12;
+
+    // Test 1: Initializer-list construction keeps duplicates
+    std::cout << "Test 1: Init-list construction... ";
+    {
+        Multiset<int> ms = {1, 1, 2, 3, 3, 3};
+        if (ms.size() != 6) { std::cout << "FAILED\n"; return 1; }
     }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 2: count() returns multiplicity
+    std::cout << "Test 2: count() multiplicity... ";
+    {
+        Multiset<int> ms = {1, 1, 2, 3, 3, 3};
+        if (ms.count(3) != 3 || ms.count(1) != 2 || ms.count(2) != 1 || ms.count(9) != 0) {
+            std::cout << "FAILED\n"; return 1;
+        }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 3: insert allows duplicates and grows size
+    std::cout << "Test 3: insert duplicates... ";
+    {
+        Multiset<int> ms;
+        ms.insert(5);
+        ms.insert(5);
+        ms.insert(5);
+        if (ms.size() != 3 || ms.count(5) != 3) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 4: elements iterate in sorted order
+    std::cout << "Test 4: sorted iteration... ";
+    {
+        Multiset<int> ms = {5, 1, 3, 1, 4, 2};
+        int prev = -1; bool sorted = true;
+        for (int x : ms) { if (x < prev) sorted = false; prev = x; }
+        if (!sorted) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 5: find returns a hit / end()
+    std::cout << "Test 5: find()... ";
+    {
+        Multiset<int> ms = {10, 20, 30};
+        if (ms.find(20) == ms.end()) { std::cout << "FAILED\n"; return 1; }
+        if (ms.find(99) != ms.end()) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 6: erase removes the ENTIRE duplicate run and returns count
+    std::cout << "Test 6: erase whole run... ";
+    {
+        Multiset<int> ms = {1, 5, 5, 5, 9};
+        auto n = ms.erase(5);
+        if (n != 3 || ms.count(5) != 0 || ms.size() != 2) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 7: erase of an absent value returns 0
+    std::cout << "Test 7: erase absent... ";
+    {
+        Multiset<int> ms = {1, 2, 3};
+        if (ms.erase(42) != 0 || ms.size() != 3) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 8: contains
+    std::cout << "Test 8: contains()... ";
+    {
+        Multiset<int> ms = {7, 7, 8};
+        if (!ms.contains(7) || !ms.contains(8) || ms.contains(0)) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 9: empty / clear
+    std::cout << "Test 9: empty/clear... ";
+    {
+        Multiset<int> ms = {1, 2, 3};
+        if (ms.empty()) { std::cout << "FAILED\n"; return 1; }
+        ms.clear();
+        if (!ms.empty() || ms.size() != 0) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 10: works with std::string keys
+    std::cout << "Test 10: string elements... ";
+    {
+        Multiset<std::string> ms = {"b", "a", "b", "c"};
+        if (ms.count("b") != 2 || ms.size() != 4) { std::cout << "FAILED\n"; return 1; }
+        std::string prev; bool sorted = true;
+        for (const auto& s : ms) { if (s < prev) sorted = false; prev = s; }
+        if (!sorted) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 11: copy construction is independent
+    std::cout << "Test 11: copy independence... ";
+    {
+        Multiset<int> a = {1, 1, 2};
+        Multiset<int> b = a;
+        b.insert(2);
+        if (a.count(2) != 1 || b.count(2) != 2) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 12: single insert then erase round-trip
+    std::cout << "Test 12: insert/erase round-trip... ";
+    {
+        Multiset<int> ms;
+        ms.insert(42);
+        if (!ms.contains(42)) { std::cout << "FAILED\n"; return 1; }
+        ms.erase(42);
+        if (ms.contains(42) || !ms.empty()) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    std::cout << "\n=================================================\n";
+    std::cout << "  RESULTS: " << passed << "/" << total << " tests passed\n";
+    std::cout << "=================================================\n";
+    if (passed == total) { std::cout << "\xE2\x9C\x93 All tests PASSED!\n"; return 0; }
+    std::cout << "\xE2\x9C\x97 Some tests FAILED\n";
     return 1;
 }
+
+/* ===== EXPECTED OUTPUT ============================================
+ * Auto-generated by running this program (see tests/README.md).
+ * ----------------------------------------------------------------------------
+=================================================
+      Multiset Implementation Test Suite        
+=================================================
+
+Test 1: Init-list construction... PASSED
+Test 2: count() multiplicity... PASSED
+Test 3: insert duplicates... PASSED
+Test 4: sorted iteration... PASSED
+Test 5: find()... PASSED
+Test 6: erase whole run... PASSED
+Test 7: erase absent... PASSED
+Test 8: contains()... PASSED
+Test 9: empty/clear... PASSED
+Test 10: string elements... PASSED
+Test 11: copy independence... PASSED
+Test 12: insert/erase round-trip... PASSED
+
+=================================================
+  RESULTS: 12/12 tests passed
+=================================================
+✓ All tests PASSED!
+ * ============================================================================ */

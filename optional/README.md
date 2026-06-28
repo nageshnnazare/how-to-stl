@@ -1,265 +1,278 @@
-# Optional - Maybe-value Type Container
+# Optional — Maybe-Value Container
 
-A C++ implementation of `std::optional` (C++17) - a container that may or may not contain a value.
+> An `Optional<T>` either holds a live value of type `T` or holds nothing at all.
+> The empty state is explicit and type-safe — no `nullptr`, no `-1` sentinel, no
+> guessing whether default-constructed `T` means "missing". You check `has_value()`
+> or `if (opt)` before you read; `value_or` gives you a fallback without exceptions.
 
-## 📋 Overview
+This is a from-scratch reimplementation of `std::optional` built for learning. The
+header is [`optional.hpp`](optional.hpp), runnable examples are in
+[`optional_example.cpp`](optional_example.cpp), and the test suite is in
+[`../tests/optional_test.cpp`](../tests/optional_test.cpp).
 
-`Optional<T>` represents a value that might be absent, providing a type-safe alternative to using pointers or sentinel values (like -1, nullptr) to indicate "no value". It's a modern C++ idiom for handling potentially missing data without exceptions or null pointer dereferences.
+---
 
-## 🎯 Key Features
+## 1. What It Is
 
-- **Type-Safe Null Handling**: No need for nullptr or sentinel values
-- **Explicit Empty State**: Clear distinction between "no value" and "value is default"
-- **Value or Default**: Easy fallback with `value_or()`
-- **In-place Storage**: No heap allocation
-- **Exception Safety**: Strong exception guarantees
-- **Move Semantics**: Efficient transfer of values
+| Property | Value |
+|---|---|
+| States | **Engaged** (has value) or **disengaged** (empty) |
+| Storage | Inline `alignas(T)` byte buffer + `bool` flag |
+| Heap | None — value lives inside the Optional object |
+| Empty check | `has_value()`, `explicit operator bool` |
+| Safe access | `value()` throws; `value_or(default)` never throws |
 
-## 🏗️ Implementation Details
+**Reach for an Optional when** a function might not produce a result, a config
+field might be unset, or you want clear "absent" semantics without exceptions.
 
-### Data Structure
+**Look elsewhere when** the value is always present (use `T` directly), you need
+multiple error kinds (exceptions or a `Result` type), or you need reference
+semantics across optional slots.
+
+---
+
+## 2. Mental Model
+
+Two states, one object — the `bool` flag is the source of truth:
+
+```
+   DISENGAGED                           ENGAGED
+   ┌─────────────────────────┐          ┌─────────────────────────┐
+   │ storage_: raw bytes     │          │ storage_: live T        │
+   │   (no T constructed)    │          │   (placement-new'd)     │
+   ├─────────────────────────┤          ├─────────────────────────┤
+   │ has_value_ = false      │          │ has_value_ = true       │
+   └─────────────────────────┘          └─────────────────────────┘
+   Dereference → UB (or throw via        *opt / opt-> / value() OK
+   value())                              after check
+```
+
+Engaging and disengaging are manual lifetime events:
+
+```
+   empty ──Optional(v)──▶ engaged     engaged ──reset()──▶ empty
+              placement new                    explicit ~T()
+```
+
+---
+
+## 3. Internal Representation
+
 ```cpp
 template<typename T>
 class Optional {
-private:
-    alignas(T) unsigned char storage_[sizeof(T)];  // Aligned raw storage
-    bool has_value_;                                // State flag
-    
-    // Placement new for construction
-    // Manual destructor calls for destruction
+    alignas(T) unsigned char storage_[sizeof(T)];  // raw buffer
+    bool has_value_;                                // engaged flag
 };
 ```
 
-### Key Techniques
-- **Placement New**: Construct objects in pre-allocated storage
-- **Aligned Storage**: Ensure proper alignment for type T
-- **Manual Lifetime Management**: Explicit construction/destruction
+**Invariant:** A `T` object exists in `storage_` if and only if `has_value_`
+is `true`. Access through `ptr()` without that guard is undefined behavior.
 
-### Complexity
-- **Construction**: O(1)
-- **Access**: O(1)
-- **Destruction**: O(1)
-- **Space**: sizeof(T) + sizeof(bool) + alignment padding
+### Why not `T member_` directly?
 
-## 📚 Core Operations
+| Approach | Empty Optional | Problem |
+|---|---|---|
+| `T value_; bool flag` | Must default-construct `T` | No "truly empty" for non-defaultable `T` |
+| Raw storage + flag | No `T` ctor until engaged | Correct optional semantics |
+
+### The four lifetime primitives
+
+| Step | What | Code in `optional.hpp` |
+|---|---|---|
+| Raw buffer | `alignas(T) char[sizeof(T)]` | member `storage_` |
+| Engage | placement new | `new (storage_) T(...)` |
+| Disengage | explicit destroy | `ptr()->~T()` |
+| Access | reinterpret | `reinterpret_cast<T*>(storage_)` |
+
+---
+
+## 4. How It Works (Step by Step)
+
+### 4.1 Default construction (disengaged)
+
+```
+   Optional<int> o;
+
+   storage_   : uninitialized bytes (not an int yet)
+   has_value_ : false
+   ~Optional  : no ~T() — nothing to destroy
+```
+
+### 4.2 Engaging with a value
+
+```
+   Optional<string> o("hello");
+
+   (1) has_value_ = true
+   (2) new (storage_) string("hello")   // placement new in raw buffer
+```
+
+### 4.3 `reset()` — disengage
+
+```
+   ENGAGED:
+       ptr()->~T()        // string destructor runs
+       has_value_ = false // storage_ is raw again
+```
+
+### 4.4 Copy and move
+
+```
+   Copy from engaged other:
+       new (storage_) T(*other.ptr())
+
+   Move from engaged other:
+       new (storage_) T(std::move(*other.ptr()))
+       other.reset()     // leave source empty
+```
+
+### 4.5 Access paths
+
+| API | Empty behavior | When to use |
+|---|---|---|
+| `value()` | throws `runtime_error` | You expect a value |
+| `value_or(d)` | returns `d` | Fallback / config defaults |
+| `*opt`, `opt->` | UB if empty | After `if (opt)` guard |
+
+### 4.6 Destructor
+
+```
+   ~Optional():
+       if has_value_: ptr()->~T()
+```
+
+---
+
+## 5. API Reference
 
 ### Construction
-```cpp
-Optional<int> opt1;              // Empty optional
-Optional<int> opt2(42);          // Optional with value
-Optional<std::string> opt3("hi"); // Works with any type
-```
+| Call | Effect |
+|---|---|
+| `Optional<T>()` | Disengaged |
+| `Optional<T>(const T&)` | Engaged, copy |
+| `Optional<T>(T&&)` | Engaged, move |
+| copy / move ctor | Duplicate or steal engaged state |
 
-### Checking for Value
-```cpp
-if (opt.has_value()) { }         // Explicit check
-if (opt) { }                     // Implicit bool conversion
-```
+### Observers
+| Call | Effect |
+|---|---|
+| `has_value()` | `true` if engaged |
+| `explicit operator bool` | Same as `has_value()` |
+| `value()` | Reference; throws if empty |
+| `value_or(default)` | Copy of value or default |
 
-### Accessing Value
-```cpp
-int val = opt.value();           // Throws if empty
-int val = *opt;                  // Unsafe (like raw pointer)
-int val = opt.value_or(99);      // Safe with default
-```
+### Modifiers
+| Call | Effect |
+|---|---|
+| `reset()` | `~T()` if engaged, then disengage |
+| `operator=` | Destroy current, copy/move other's state |
 
-### Resetting
-```cpp
-opt.reset();                     // Clear the value
-```
+### Dereference
+| Call | Note |
+|---|---|
+| `*opt`, `opt->` | No check — UB if empty |
 
-## 🚀 Usage Examples
+---
 
-### Basic Usage
+## 6. Complexity Summary
+
+| Operation | Complexity | Note |
+|---|---|---|
+| Construct empty | O(1) | No `T` ctor |
+| Construct with value | O(1) or O(n) | Depends on `T` |
+| `has_value`, `bool` | O(1) | |
+| `value`, `*`, `->` | O(1) | |
+| `reset` | O(1) or O(n) | Runs `~T()` |
+| Copy / move | Cost of `T` | |
+
+**Space:** `sizeof(T)` (aligned) + `sizeof(bool)` + possible tail padding.
+
+---
+
+## 7. Usage
+
 ```cpp
+#include "optional/optional.hpp"
+
 Optional<int> divide(int a, int b) {
-    if (b == 0) return Optional<int>();  // Return empty
+    if (b == 0) return Optional<int>();
     return Optional<int>(a / b);
 }
 
-auto result = divide(10, 2);
-if (result) {
-    std::cout << "Result: " << *result << "\n";
+auto r = divide(10, 2);
+if (r) {
+    std::cout << *r << '\n';
 }
+
+Optional<std::string> name;  // unset
+std::string display = name.value_or("Guest");
+
+Optional<int> port(8080);
+port.reset();
 ```
 
-### Safe Default Values
-```cpp
-Optional<std::string> get_username();
+See [`optional_example.cpp`](optional_example.cpp) for empty vs engaged states,
+`value_or`, exceptions, reset, complex types with visible ctors/dtors, function
+returns, copy/move, and config patterns.
 
-std::string name = get_username().value_or("Guest");
-std::cout << "Welcome, " << name << "\n";
-```
+---
 
-### Configuration Pattern
-```cpp
-struct Config {
-    Optional<int> port;
-    Optional<std::string> host;
-};
+## 8. Design Decisions & Trade-offs
 
-Config config;  // User doesn't provide config
+- **Aligned raw storage** — correct for any `T`; avoids always-constructed member.
+- **`runtime_error` on empty `value()`** — teaching clarity; `std::optional` uses
+  `std::bad_optional_access`.
+- **Move leaves source empty** — via `other.reset()` after stealing; matches
+  standard optional move semantics.
+- **No `emplace`, `swap`, or comparisons** — smaller surface for learning.
+- **Stack-only** — large `T` makes every Optional bulky; use `Optional<unique_ptr<U>>`
+  for indirection when needed.
 
-int port = config.port.value_or(8080);        // Use default
-std::string host = config.host.value_or("localhost");
-```
+---
 
-### Complex Types
-```cpp
-struct User {
-    std::string name;
-    int age;
-};
+## 9. Common Pitfalls
 
-Optional<User> find_user(int id);
+- **Dereferencing without a check.** `*opt` on an empty optional is UB — same as
+  `*nullptr`.
+- **Confusing "empty" with "value is zero".** `Optional<int>(0)` is engaged;
+  `if (opt)` is true even when `*opt == 0`.
+- **Forgetting that `value_or` copies.** For expensive `T`, consider references or
+  `optional<const T&>` patterns outside this teaching type.
+- **Double destruction.** Never call `~T()` on storage unless engaged; the
+  implementation guards every path with `has_value_`.
 
-if (auto user = find_user(123)) {
-    std::cout << user->name;  // Use arrow operator
-}
-```
+---
 
-## 🔍 When to Use
+## 10. Comparison with `std::optional`
 
-### Use Optional When:
-- ✅ Function might not return a value (alternative to exceptions)
-- ✅ Field might be uninitialized or absent
-- ✅ You want to avoid sentinel values (-1, nullptr, "")
-- ✅ Explicit "no value" is semantically important
-- ✅ You want type-safe null handling
+**Same:** engaged/disengaged states, placement new, `value_or`, bool test, move
+empties source.
 
-### Use Other Approaches When:
-- ❌ Value is always present → Use T directly
-- ❌ Multiple error conditions → Use exceptions or Result<T, E>
-- ❌ Performance critical path with always-present values → Use T
-- ❌ Need to distinguish multiple empty states → Use enum or variant
+**Intentionally omitted:** `std::nullopt`, `emplace`, `swap`, relational ops,
+`std::bad_optional_access`, and monadic operations (`and_then`, C++23).
 
-## 🆚 Comparison with Alternatives
+---
 
-| Approach | Type Safety | Semantics | Overhead |
-|----------|-------------|-----------|----------|
-| **Optional<T>** | ✅ Strong | Clear "maybe" | bool flag |
-| **T\*** | ❌ Weak | Unclear lifetime | Pointer size |
-| **Sentinel (-1)** | ❌ None | Ambiguous | None |
-| **Exception** | ✅ Strong | Error handling | Call stack |
-| **Pair<bool, T>** | ⚠️ Manual | Verbose | bool + T |
-
-## 🎓 Special Features
-
-### value() vs value_or()
-```cpp
-Optional<int> opt;
-
-// value() - throws if empty (use when you expect a value)
-try {
-    int val = opt.value();
-} catch (...) { }
-
-// value_or() - returns default if empty (use for fallback)
-int val = opt.value_or(42);  // No exception, returns 42
-```
-
-### Bool Conversion
-```cpp
-Optional<int> opt(0);  // Value is 0
-
-if (opt) {
-    // This executes! Optional is not empty even though value is 0
-    std::cout << *opt;  // Prints: 0
-}
-```
-
-### Pointer-like Access
-```cpp
-struct Point { int x, y; };
-Optional<Point> opt(Point{10, 20});
-
-opt->x = 30;           // Modify through arrow operator
-std::cout << (*opt).y; // Dereference and access
-```
-
-## 💡 Best Practices
-
-1. **Prefer value_or() for Defaults**: More readable than if-else
-2. **Check Before Dereferencing**: Use `if (opt)` before `*opt`
-3. **Use value() When You Expect Value**: Makes bugs visible
-4. **Return Optional from Functions**: Better than sentinel values
-5. **Don't Overuse**: If value is always present, use T directly
-
-## 📊 Common Patterns
-
-### Safe Division
-```cpp
-Optional<double> safe_divide(double a, double b) {
-    if (b == 0.0) return Optional<double>();
-    return Optional<double>(a / b);
-}
-```
-
-### Database Lookup
-```cpp
-Optional<User> find_by_id(int id) {
-    if (/* found in DB */) return Optional<User>(user);
-    return Optional<User>();
-}
-```
-
-### Configuration with Defaults
-```cpp
-class Server {
-    int port = config.port.value_or(8080);
-    int timeout = config.timeout.value_or(30);
-    std::string host = config.host.value_or("localhost");
-};
-```
-
-### Optional Chaining
-```cpp
-Optional<User> user = get_user();
-Optional<Address> addr = user ? get_address(*user) : Optional<Address>();
-std::string city = addr ? addr->city : "Unknown";
-```
-
-## 🔗 API Reference
-
-| Method | Description | Throws | Time |
-|--------|-------------|--------|------|
-| `Optional()` | Construct empty | No | O(1) |
-| `Optional(T)` | Construct with value | No | O(1) |
-| `has_value()` | Check if contains value | No | O(1) |
-| `operator bool()` | Implicit bool check | No | O(1) |
-| `value()` | Get value (throw if empty) | Yes | O(1) |
-| `value_or(T)` | Get value or default | No | O(1) |
-| `operator*()` | Dereference (unsafe) | No | O(1) |
-| `operator->()` | Arrow access (unsafe) | No | O(1) |
-| `reset()` | Clear value | No | O(1) |
-
-## 🏃 Building and Running
+## 11. Build & Run
 
 ```bash
-# Compile example
-make optional-example
-
-# Run example
-make run-optional
-
-# Run tests
-make test-optional
+make run-optional     # build + run the examples
+make test-optional    # build + run the unit tests
+make all              # build everything in the repo
 ```
 
-## 🌟 Advantages Over Raw Pointers
+From the repo root:
 
-| Feature | Optional<T> | T* |
-|---------|-------------|-----|
-| **Ownership** | Value semantics | Unclear |
-| **Null Safety** | Explicit check | Easy to forget |
-| **Allocation** | Stack | Often heap |
-| **Copying** | Deep copy | Shallow (pointer) |
-| **Lifetime** | Automatic | Manual |
-| **Intent** | "Maybe has value" | "Points to something" |
+```bash
+g++ -std=c++14 -Wall -Wextra -Wpedantic -I. optional/optional_example.cpp -o /tmp/x_optional
+/tmp/x_optional
+```
 
-## 📖 See Also
+---
 
-- **Pair**: For two-value tuples
-- **Tuple**: For multiple values
-- **Variant**: For one-of-many types (like Rust's enum)
+## 12. See Also
 
+- [`pair`](../pair/README.md) — always holds two values (no empty state)
+- [`tuple`](../tuple/README.md) — fixed product of N values
+- [`map`](../map/README.md) — `find` returns iterator, not optional (in this repo)

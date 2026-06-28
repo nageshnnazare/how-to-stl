@@ -1,454 +1,279 @@
-# Thread Arena Allocator
+# Arena Allocator — Per-Thread Bump Memory Pools
 
-A high-performance, per-thread memory pool allocator designed for fast, lock-free allocation in multi-threaded applications.
+> A `ThreadArenaAllocator` gives every OS thread its own bump arena so hot-path
+> allocations are pointer arithmetic with no mutex. Individual frees are
+> deliberate no-ops; reset the arena (or use `ScopedArena`) when a request,
+> frame, or compile pass ends and reclaim everything at once.
 
-## Overview
+This is a from-scratch reimplementation of per-thread arena allocation built for
+learning. The header is [`arena_allocator.hpp`](arena_allocator.hpp), runnable
+examples are in [`arena_allocator_example.cpp`](arena_allocator_example.cpp),
+and the test suite is in
+[`../tests/arena_allocator_test.cpp`](../tests/arena_allocator_test.cpp).
 
-The Thread Arena Allocator provides each thread with its own memory arena, eliminating contention and enabling blazing-fast allocations. Perfect for scenarios where temporary memory is needed during request processing, frame rendering, or compilation.
+---
 
-## Key Features
+## 1. What It Is
 
-- **Per-thread Arenas**: Each thread gets its own memory pool
-- **Lock-free Allocation**: No locks for thread's own arena
-- **Automatic Management**: Arenas created on first use
-- **RAII Support**: Scoped arena with automatic reset
-- **Type Safety**: Typed allocator wrapper
-- **Arena Containers**: Custom containers using arena allocation
-- **Statistics**: Per-thread and global memory tracking
+| Property | Value |
+|---|---|
+| Allocation model | Bump pointer per thread |
+| Hot-path lock | **None** (after arena exists) |
+| Individual free | **No** — bulk `reset()` only |
+| Thread safety | Safe across threads (separate arenas) |
+| Default arena size | 1 MiB per thread |
+| Alignment | Rounded on every `allocate()` |
 
-## Architecture
+**Reach for an arena when** many threads allocate short-lived temporaries and
+malloc contention shows up in profiles — web requests, game frames, compiler
+front-ends.
+
+**Look elsewhere when** objects have independent lifetimes (see
+[`allocator`](../allocator/README.md) pool/free-list), or you need one shared
+heap with arbitrary frees.
+
+---
+
+## 2. Mental Model
+
+Each thread owns a private slab; a global manager only creates arenas on first use:
 
 ```
-Thread 1 → Arena 1 (1 MB)  ────┐
-Thread 2 → Arena 2 (1 MB)  ────┤
-Thread 3 → Arena 3 (1 MB)  ────┼─→ ThreadArenaAllocator
-Thread 4 → Arena 4 (1 MB)  ────┘
-     ↓
-[Fast, lock-free allocation for owning thread]
+   ThreadArenaAllocator                    Thread 1          Thread 2
+   ┌──────────────────────┐               ┌─────────┐       ┌─────────┐
+   │ mutex_ + arenas_ map │──creates──▶   │ Arena 1 │       │ Arena 2 │
+   │ arena_size_ = 1MB  │               │ bump ──▶│       │ bump ──▶│
+   └──────────────────────┘               └─────────┘       └─────────┘
+        ▲ lock only on                           │ lock-free allocate()
+        │ first touch per thread                 ▼
 ```
 
-### Components
+- Bytes `[0, offset_)` in an arena are **handed out**.
+- Bytes `[offset_, size_)` are **available** until the next bump.
+- `reset()` sets `offset_ = 0` — instant reclaim of the whole slab.
 
-1. **Arena**: Single thread's memory pool
-   - Fixed-size buffer
-   - Bump pointer allocation
-   - Atomic offset counter
-   - Reset capability
+---
 
-2. **ThreadArenaAllocator**: Manages per-thread arenas
-   - Creates arenas on demand
-   - Thread-safe arena management
-   - Global statistics
-   - Reset all arenas
+## 3. Internal Representation
 
-3. **ScopedArena**: RAII helper
-   - Automatic reset on destruction
-   - Convenient for per-request allocation
-
-4. **ArenaVector**: Custom vector using arena
-   - No individual deallocations
-   - Fast growth
-   - Iterator support
-
-## Usage
-
-### Basic Allocation
+### Arena (one thread's slab)
 
 ```cpp
-#include "arena_allocator.hpp"
-
-ThreadArenaAllocator allocator(1024 * 1024);  // 1 MB per thread
-
-// Allocate memory
-int* numbers = static_cast<int*>(allocator.allocate(10 * sizeof(int)));
-for (int i = 0; i < 10; ++i) {
-    numbers[i] = i * 10;
-}
-
-// Check statistics
-auto stats = allocator.get_thread_stats();
-std::cout << "Used: " << stats.used << " bytes\n";
-std::cout << "Available: " << stats.available << " bytes\n";
+char*                 buffer_;   // malloc'd slab base
+size_t                size_;     // fixed capacity
+std::atomic<size_t>   offset_;   // bump pointer (relaxed stores on allocate)
 ```
 
-### Multi-threaded Allocation
+**Invariant:** `0 <= offset_ <= size_` when used from the owning thread.
+
+### ThreadArenaAllocator (manager)
 
 ```cpp
-ThreadArenaAllocator allocator(1024 * 128);  // 128 KB per thread
-
-std::vector<std::thread> threads;
-for (int i = 0; i < 4; ++i) {
-    threads.emplace_back([&]() {
-        // Each thread gets its own arena
-        for (int j = 0; j < 100; ++j) {
-            void* ptr = allocator.allocate(64);
-            // Use ptr...
-        }
-    });
-}
-
-for (auto& t : threads) t.join();
-
-// Check global stats
-auto global = allocator.get_global_stats();
-std::cout << "Total arenas: " << global.num_arenas << "\n";
-std::cout << "Total used: " << global.total_used << " bytes\n";
+size_t                              arena_size_;  // bytes per new Arena
+mutable std::mutex                  mutex_;       // protects arenas_ map
+std::unordered_map<std::thread::id, Arena*> arenas_;
 ```
 
-### Scoped Arena (RAII)
+### Helpers
 
-```cpp
-ThreadArenaAllocator allocator(1024 * 64);
+| Type | Role |
+|---|---|
+| `TypedArenaAllocator<T>` | typed `allocate(n)` / `construct` / `destroy` |
+| `ScopedArena` | RAII `reset_thread_arena()` on scope exit |
+| `ArenaVector<T>` | growable vector backed by arena bumps |
 
-{
-    ScopedArena scope(allocator);
-    
-    // Allocate during request/frame
-    int* data = static_cast<int*>(scope.allocate(100 * sizeof(int)));
-    
-    // Or use create for construction
-    MyObject* obj = scope.create<MyObject>(arg1, arg2);
-    
-}  // Arena automatically resets here!
+---
 
-// Memory is reclaimed, ready for next request/frame
+## 4. How It Works (Step by Step)
+
+### 4.1 Bump allocation with alignment
+
+```
+   offset_=48, request 32 bytes, align=16
+
+   (1) pad: 48 % 16 == 0  →  aligned_offset = 48
+   (2) new_offset = 48 + 32 = 80  ≤ size_  → OK
+   (3) return buffer_+48; store offset_=80
+
+   slab:  [████████ used ████████│ NEW 32B │░░ free ░░]
 ```
 
-### Arena Vector
+Alignment padding is mandatory: returning misaligned addresses breaks `alignof(T)`
+for placement new and SIMD loads.
 
-```cpp
-ThreadArenaAllocator allocator(1024 * 64);
+### 4.2 First allocation on a new thread
 
-ArenaVector<int> vec(allocator);
+```
+   Thread T calls allocate(64):
 
-for (int i = 0; i < 100; ++i) {
-    vec.push_back(i * 2);
-}
-
-// Access elements
-std::cout << vec[50] << "\n";
-
-// Iterate
-for (int val : vec) {
-    std::cout << val << " ";
-}
+   lock(mutex_)
+   if T not in arenas_:
+       arenas_[T] = new Arena(arena_size_)   // e.g. 1 MiB malloc once
+   unlock
+   arenas_[T]->allocate(64)   // no lock — bump only
 ```
 
-### Typed Allocator
+Subsequent allocations on thread T still call `get_thread_arena()` (map lookup
+under mutex). A production version would cache `Arena*` in `thread_local` storage.
 
-```cpp
-ThreadArenaAllocator allocator(1024);
-TypedArenaAllocator<MyClass> typed(allocator);
+### 4.3 Bulk reclaim — reset vs ScopedArena
 
-// Allocate array of objects
-MyClass* objects = typed.allocate(10);
-
-// Construct in place
-for (int i = 0; i < 10; ++i) {
-    typed.construct(&objects[i], arg1, arg2);
-}
-
-// Use objects...
-
-// Destroy (but memory stays in arena)
-for (int i = 0; i < 10; ++i) {
-    typed.destroy(&objects[i]);
-}
+```
+   request handler {
+       ScopedArena scope(alloc);
+       void* buf = scope.allocate(4096);
+       parse(buf);
+   }  // ~ScopedArena → reset_thread_arena() → offset_ = 0
 ```
 
-## API Reference
+No per-allocation `free()` — the entire request's bumps vanish in one store.
+
+### 4.4 ArenaVector growth
+
+When `size_ == capacity_`, vector doubles by bumping a **new** larger array in the
+arena and move-constructing elements. Old array bytes are abandoned until arena
+reset (classic arena trade-off: simple growth, no individual block free).
+
+---
+
+## 5. API Reference
 
 ### ThreadArenaAllocator
-
-```cpp
-// Constructor
-explicit ThreadArenaAllocator(size_t arena_size = 1024 * 1024);
-
-// Allocation
-void* allocate(size_t size, size_t alignment = alignof(std::max_align_t));
-
-// Reset
-void reset_thread_arena();  // Reset current thread's arena
-void reset_all();           // Reset all arenas
-
-// Statistics
-struct ThreadStats {
-    size_t used;
-    size_t available;
-    size_t capacity;
-};
-ThreadStats get_thread_stats() const;
-
-struct GlobalStats {
-    size_t num_arenas;
-    size_t total_capacity;
-    size_t total_used;
-    size_t total_available;
-};
-GlobalStats get_global_stats() const;
-
-size_t num_arenas() const;
-```
+| Call | Effect |
+|---|---|
+| `ThreadArenaAllocator(arena_size)` | construct manager (lazy arenas) |
+| `allocate(size, align)` | bump on current thread's arena |
+| `reset_thread_arena()` | `offset_ = 0` for caller's thread |
+| `reset_all()` | reset every arena |
+| `get_thread_stats()` | used / available / capacity |
+| `get_global_stats()` | aggregate across arenas |
+| `num_arenas()` | map size |
 
 ### Arena
-
-```cpp
-Arena(size_t size);
-
-void* allocate(size_t size, size_t alignment = alignof(std::max_align_t));
-void reset();
-
-size_t used() const;
-size_t available() const;
-size_t capacity() const;
-```
+| Call | Effect |
+|---|---|
+| `allocate(size, align)` | bump; nullptr if full |
+| `reset()` | offset → 0 |
+| `used()` / `available()` / `capacity()` | introspection |
 
 ### ScopedArena
+| Call | Effect |
+|---|---|
+| `ScopedArena(alloc)` | bind manager |
+| `allocate` / `create<T>(...)` | forward to manager |
+| destructor | `reset_thread_arena()` |
+
+### ArenaVector\<T\>
+| Call | Effect |
+|---|---|
+| `push_back(v)` | grow via new arena bump if needed |
+| `operator[]`, `size`, `begin/end` | minimal vector surface |
+
+---
+
+## 6. Complexity Summary
+
+| Operation | Complexity | Note |
+|---|---|---|
+| `Arena::allocate` | O(1) | pointer bump + alignment pad |
+| `Arena::reset` | O(1) | single atomic store |
+| First alloc per thread | O(1) + lock | map insert + `new Arena` |
+| Later `get_thread_arena` | O(1) amortized | hash map + mutex |
+| `ArenaVector::push_back` | O(1) amortized | O(n) when regrow copies elements |
+| Individual free | N/A | by design |
+
+---
+
+## 7. Usage
 
 ```cpp
-explicit ScopedArena(ThreadArenaAllocator& allocator);
-~ScopedArena();  // Resets arena
+#include "arena_allocator/arena_allocator.hpp"
 
-void* allocate(size_t size, size_t alignment = alignof(std::max_align_t));
+ThreadArenaAllocator alloc(1024 * 128);  // 128 KiB per thread
 
-template<typename T, typename... Args>
-T* create(Args&&... args);
-```
+// Direct bump
+int* nums = static_cast<int*>(alloc.allocate(10 * sizeof(int)));
 
-### ArenaVector<T>
-
-```cpp
-explicit ArenaVector(ThreadArenaAllocator& arena, size_t initial_capacity = 16);
-
-void push_back(const T& value);
-T& operator[](size_t index);
-size_t size() const;
-size_t capacity() const;
-bool empty() const;
-
-T* begin();
-T* end();
-```
-
-## Performance
-
-**Benchmark**: 8 threads, 10,000 allocations each (64 bytes)
-
-| Allocator Type      | Time    | Throughput        |
-|---------------------|---------|-------------------|
-| Arena Allocator     | 4 ms    | 20,000,000 ops/s  |
-| malloc (baseline)   | 1 ms    | 80,000,000 ops/s  |
-
-**Note**: Arena allocator shows its strength when:
-- Allocations are temporary (per-request/frame)
-- Bulk deallocation is acceptable
-- Thread contention would be high with malloc
-
-**Memory Usage**: Each thread uses fixed arena size (e.g., 1 MB). No overhead per allocation.
-
-## Use Cases
-
-### 1. Web Server Request Handler
-```cpp
-void handle_request(ThreadArenaAllocator& allocator, Request& req) {
-    ScopedArena scope(allocator);
-    
-    // Allocate request-specific data
-    auto* parse_buffer = scope.allocate(4096);
-    auto* response_data = scope.allocate(8192);
-    
-    // Process request...
-    
-}  // All memory reclaimed automatically
-```
-
-### 2. Game Engine Frame
-```cpp
-void render_frame(ThreadArenaAllocator& allocator) {
-    ScopedArena scope(allocator);
-    
-    // Temporary frame data
-    ArenaVector<RenderCommand> commands(allocator);
-    
-    // Build render list...
-    
-}  // Frame memory reclaimed
-```
-
-### 3. Compiler/Parser
-```cpp
-void compile_file(ThreadArenaAllocator& allocator, const char* filename) {
-    ScopedArena scope(allocator);
-    
-    // Allocate AST nodes, symbol tables, etc.
-    ASTNode* root = scope.create<ASTNode>();
-    
-    // Parse and compile...
-    
-}  // All compilation temporaries freed
-```
-
-### 4. Database Query Processing
-```cpp
-QueryResult execute_query(ThreadArenaAllocator& allocator, Query& q) {
-    ScopedArena scope(allocator);
-    
-    // Intermediate buffers
-    auto* row_buffer = scope.allocate(query.row_size * 1000);
-    
-    // Process query...
-    
-    return result;  // Intermediate data freed
-}
-```
-
-## Design Decisions
-
-### Why Per-Thread Arenas?
-
-1. **No Locks**: Each thread allocates from its own arena without synchronization
-2. **Cache Locality**: Thread's allocations stay in its own cache lines
-3. **Simple**: No complex memory management
-
-### Why Not Individual Deallocation?
-
-1. **Speed**: Bump pointer allocation is extremely fast
-2. **Simplicity**: No free lists, no fragmentation
-3. **Use Case**: Perfect for temporary allocations with bulk deallocation
-
-### When NOT to Use
-
-- Long-lived allocations
-- Unpredictable allocation patterns
-- When individual deallocation is required
-- Memory is extremely constrained
-
-## Implementation Details
-
-### Allocation Strategy
-
-```
-Arena Buffer: [----used----|----available----]
-                            ↑
-                         offset
-```
-
-1. Calculate alignment padding
-2. Check if space available
-3. Bump offset
-4. Return pointer
-
-### Thread Safety
-
-- Arena creation: Protected by mutex
-- Allocation: Lock-free for owning thread
-- Global operations (reset_all, stats): Protected by mutex
-
-### Memory Layout
-
-```
-Allocated Objects:
-[Object1][padding][Object2][padding][Object3]...
-```
-
-Alignment padding ensures proper alignment for each allocation.
-
-## Testing
-
-Run the test suite:
-```bash
-make test-arena-allocator
-```
-
-Run examples:
-```bash
-make run-arena-allocator
-```
-
-**Test Coverage**: 45 tests covering:
-- Basic allocation
-- Alignment (16, 32, 64 bytes)
-- Arena exhaustion
-- Reset functionality
-- Multi-threaded allocation
-- Scoped arena
-- Arena vector
-- Typed allocator
-- Global statistics
-- Concurrent access
-
-## Comparison with Other Allocators
-
-| Feature                  | Arena | Pool | FreeList | malloc |
-|-------------------------|-------|------|----------|--------|
-| Per-thread              | ✅    | ❌   | ❌       | ❌     |
-| Lock-free (same thread) | ✅    | ❌   | ❌       | ❌     |
-| Individual dealloc      | ❌    | ✅   | ✅       | ✅     |
-| Fragmentation           | None  | None | Some     | Some   |
-| Speed (allocation)      | Fast  | Fast | Medium   | Medium |
-| Bulk deallocation       | ✅    | ❌   | ❌       | ❌     |
-
-## Advanced Usage
-
-### Custom Arena Size
-
-```cpp
-// Small arenas for low-memory systems
-ThreadArenaAllocator small_allocator(64 * 1024);  // 64 KB
-
-// Large arenas for high-throughput systems
-ThreadArenaAllocator large_allocator(16 * 1024 * 1024);  // 16 MB
-```
-
-### Nested Scopes
-
-```cpp
-ScopedArena outer(allocator);
+// RAII per request
 {
-    ScopedArena inner(allocator);
-    // Allocations...
-}  // Inner scope resets arena
-// Outer scope allocations lost!
+    ScopedArena scope(alloc);
+    auto* node = scope.create<ASTNode>(token);
+}  // arena reset for this thread
+
+// Arena-backed container
+ArenaVector<int> vec(alloc);
+for (int i = 0; i < 100; ++i) vec.push_back(i * 2);
+
+alloc.reset_thread_arena();  // or reset_all() between phases
 ```
 
-**Warning**: Only use one ScopedArena at a time per thread.
+See [`arena_allocator_example.cpp`](arena_allocator_example.cpp) for multi-threaded
+demos, scoped reset, `ArenaVector`, and malloc comparison.
 
-### Arena Reuse Pattern
+---
 
-```cpp
-ThreadArenaAllocator allocator(1024 * 1024);
+## 8. Design Decisions & Trade-offs
 
-while (process_requests()) {
-    ScopedArena scope(allocator);
-    // Process request using scope
-    // Arena resets after each request
-}
+- **Per-thread slabs vs one locked bump.** Eliminates cross-thread false sharing
+  and malloc lock contention; costs `arena_size_` reserved per active thread.
+- **Atomic offset without CAS loop.** Single-writer assumption (owning thread);
+  not safe for multiple threads bumping the same `Arena`.
+- **No individual free.** Keeps allocate at ~3–5 instructions; callers batch lifetimes.
+- **Lazy arena creation.** Threads that never allocate pay zero arena memory.
+- **ArenaVector abandons old buffers.** Simpler than compating; acceptable when a
+  `reset()` follows soon after.
+
+---
+
+## 9. Common Pitfalls
+
+- **Arena exhaustion.** `allocate()` returns nullptr when `offset_ + size > size_`;
+  size arenas for peak per-thread usage or call `reset()` more often.
+- **Forgotten reset.** Without `ScopedArena` or explicit reset, bumps accumulate
+  until the arena is full even if objects are logically dead.
+- **Nested ScopedArena.** Inner scope reset wipes outer scope's allocations too —
+  one scope per thread per logical unit of work.
+- **Cross-thread pointer use.** Memory allocated on thread A's arena should be
+  used on thread A unless you guarantee no concurrent bump/reset.
+- **Destructors before reset.** `reset()` does not call `~T()`; destroy objects or
+  use RAII wrappers that destroy in `~ScopedArena` before reset.
+
+---
+
+## 10. Comparison with `malloc` and `LinearAllocator`
+
+**vs malloc:** arenas win on thread-local hot paths; malloc wins on arbitrary
+lifetimes and global fairness.
+
+**vs `LinearAllocator` in [`allocator`](../allocator/README.md):** same bump
+semantics, but `ThreadArenaAllocator` adds per-thread isolation and a mutex-protected
+registry so worker threads do not share one offset.
+
+**Not `std::pmr::monotonic_buffer_resource`:** similar bump idea, but this code is
+explicit about thread mapping and teaching diagrams.
+
+---
+
+## 11. Build & Run
+
+```bash
+make run-arena-allocator     # build + run the examples
+make test-arena-allocator    # build + run the unit tests
+make all                     # build everything in the repo
 ```
 
-## Limitations
+Manual compile from repo root:
 
-1. **No Individual Deallocation**: Cannot free individual allocations
-2. **Fixed Arena Size**: Arena size set at creation
-3. **Memory Overhead**: Each thread reserves full arena size
-4. **Arena Exhaustion**: Allocation fails when arena full
+```bash
+g++ -std=c++14 -Wall -Wextra -Wpedantic -pthread -I. \
+    arena_allocator/arena_allocator_example.cpp -o /tmp/x_arena_allocator
+```
 
-## Best Practices
+---
 
-1. **Choose Appropriate Size**: Based on typical usage patterns
-2. **Use Scoped Arenas**: For automatic cleanup
-3. **Monitor Statistics**: Track arena utilization
-4. **Reset Regularly**: In per-request/frame scenarios
-5. **Avoid Long-Lived Data**: Arena not suitable for persistent data
+## 12. See Also
 
-## Thread Safety Guarantees
-
-- **Allocation (same thread)**: Lock-free ✅
-- **Allocation (different threads)**: Thread-safe (separate arenas) ✅
-- **Reset current arena**: Thread-safe ✅
-- **Reset all arenas**: Thread-safe (mutex protected) ✅
-- **Statistics**: Thread-safe ✅
-
-## License
-
-Part of the Custom STL Implementation Project
-
+- [`allocator`](../allocator/README.md) — single-thread linear, pool, stack, free-list
+- [`thread_pool`](../thread_pool/README.md) — workers that pair well with per-thread arenas
+- [`locks`](../locks/README.md) — mutex protecting the arena map
+- [`vector`](../vector/README.md) — `ArenaVector` is a minimal arena-backed cousin

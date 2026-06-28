@@ -1,628 +1,293 @@
-# Thread Pool
+# Thread Pool — Task-Based Parallelism
 
-A production-quality thread pool implementation providing task-based parallelism with worker threads, future-based result retrieval, and advanced features like work stealing.
+> A `ThreadPool` keeps N worker threads alive, blocking on a shared task queue until
+> work arrives. Call `submit()` to enqueue a job and get a `std::future`; workers
+> pop tasks under a mutex, run them outside the lock, and increment statistics.
+> Shutdown sets a stop flag and joins every worker after the queue drains.
 
-## Overview
+This is a from-scratch reimplementation of a classic thread pool built for learning.
+The header is [`thread_pool.hpp`](thread_pool.hpp), runnable examples are in
+[`thread_pool_example.cpp`](thread_pool_example.cpp), and the test suite is in
+[`../tests/thread_pool_test.cpp`](../tests/thread_pool_test.cpp).
 
-The Thread Pool manages a collection of worker threads that process tasks from a shared queue. It provides an efficient way to parallelize work across multiple CPU cores without the overhead of creating/destroying threads for each task.
+---
 
-## Key Features
+## 1. What It Is
 
-- **Worker Thread Management**: Automatic thread lifecycle
-- **Future-based Results**: Get results from async tasks
-- **Fire-and-Forget**: Execute tasks without waiting for results
-- **Parallel For**: Easy parallelization of loops
-- **Exception Handling**: Exceptions propagated through futures
-- **Statistics**: Track active workers, queued tasks, completed tasks
-- **Work Stealing**: Optional advanced implementation
-- **Priority Tasks**: Optional priority queue support
+| Property | Value |
+|---|---|
+| Workers | Fixed count (default `hardware_concurrency()`) |
+| Queue | FIFO `std::queue<std::function<void()>>` |
+| Synchronization | `mutex_` + `condition_variable` |
+| Results | `submit()` → `std::future` via `packaged_task` |
+| Fire-and-forget | `execute()` (no future) |
+| Shutdown | `stop_` flag + `notify_all` + `join` |
+| Extras | `ParallelFor`, `TaskQueue`, `WorkStealingThreadPool` |
 
-## Architecture
+**Reach for a thread pool when** you have many medium-grained tasks and creating
+a thread per task would thrash the OS scheduler.
+
+**Look elsewhere when** tasks are tiny (< few μs), work is I/O-bound (async I/O),
+or you only need one-off parallelism (`std::async` may suffice).
+
+---
+
+## 2. Mental Model
 
 ```
-                   ThreadPool
-                       |
-    ┌──────────────────┼──────────────────┐
-    ↓                  ↓                  ↓
- Worker 1           Worker 2          Worker N
-    ↓                  ↓                  ↓
-         ┌─────────────────────┐
-         │   Task Queue        │
-         │  [Task1][Task2]...  │
-         └─────────────────────┘
+   Producers (any thread)              ThreadPool                    Workers
+        │                                  │                            │
+        ├─ submit(f) ──▶ lock ──▶ push ─────┼── notify_one ─────────────▶│ W0
+        │                                  │ tasks_[..]                 ├─ pop, unlock
+        ├─ execute(g) ──▶ push ────────────┤                            ├─ run g()
+        │                                  │                     notify ─▶│ W1..WN
+        └─ future.get() ◀── packaged_task sets result ────────────────────┘
 ```
 
-### Components
+- **Enqueue** happens under `mutex_` (fast).
+- **Execute** happens without `mutex_` (slow user code must not block peers).
+- **`condition_`** parks idle workers until `stop_ || !tasks_.empty()`.
 
-1. **ThreadPool**: Main thread pool class
-   - Worker thread management
-   - Task queue
-   - Synchronization primitives
-   - Statistics tracking
+---
 
-2. **ParallelFor**: Helper for parallel loops
-   - Automatic work distribution
-   - Wait for completion
-
-3. **TaskQueue**: Priority task queue
-   - Thread-safe operations
-   - Priority-based ordering
-
-4. **WorkStealingThreadPool**: Advanced variant
-   - Per-worker queues
-   - Work stealing from idle workers
-   - Better load balancing
-
-## Usage
-
-### Basic Thread Pool
+## 3. Internal Representation
 
 ```cpp
-#include "thread_pool.hpp"
-
-// Create pool with 4 workers
-ThreadPool pool(4);
-
-// Submit task with return value
-auto future = pool.submit([]() {
-    return 42;
-});
-
-int result = future.get();  // Blocks until task completes
-std::cout << "Result: " << result << "\n";
+std::vector<std::thread>              workers_;           // OS threads
+std::queue<std::function<void()>>     tasks_;             // pending FIFO work
+std::mutex                            mutex_;             // queue + wait predicate
+std::condition_variable               condition_;         // sleep / wake
+std::atomic<bool>                     stop_;              // shutdown requested
+std::atomic<size_t>                   active_workers_;    // in-flight tasks
+std::atomic<size_t>                   completed_tasks_;   // lifetime counter
 ```
 
-### Task with Parameters
+**Invariant:** only `worker_thread()` pops `tasks_`; producers only push.
+
+### WorkStealingThreadPool (alternate)
 
 ```cpp
-ThreadPool pool(4);
-
-auto future = pool.submit([](int a, int b) {
-    return a + b;
-}, 10, 20);
-
-std::cout << "Sum: " << future.get() << "\n";  // 30
+struct Worker {
+    std::queue<std::function<void()>> tasks;
+    std::mutex mutex;
+    std::thread thread;
+};
+// submit round-robins; idle workers try_to_lock and steal from others
 ```
 
-### Fire-and-Forget
+---
 
-```cpp
-ThreadPool pool(4);
-std::atomic<int> counter{0};
+## 4. How It Works (Step by Step)
 
-// Execute without getting results
-for (int i = 0; i < 100; ++i) {
-    pool.execute([&counter]() {
-        counter.fetch_add(1, std::memory_order_relaxed);
-    });
-}
+### 4.1 Worker lifecycle
 
-pool.wait();  // Wait for all tasks to complete
-std::cout << "Counter: " << counter.load() << "\n";
+```
+   worker loop:
+       lock(mutex_)
+       wait(cv) until stop_ || !tasks_.empty()
+
+       if stop_ && tasks_.empty():  EXIT thread
+
+       task = move(tasks_.front()); pop
+       unlock
+
+       active_workers_++
+       try { task(); } catch(...) { swallow — future holds exception }
+       active_workers_--
+       completed_tasks_++
 ```
 
-### Parallel Computation
+Swallowing in the worker keeps the pool alive; `packaged_task` stores exceptions
+into the `future` for `submit()` callers.
 
-```cpp
-ThreadPool pool(4);
+### 4.2 submit() with futures
 
-const int N = 1000000;
-std::vector<int> numbers(N);
-std::iota(numbers.begin(), numbers.end(), 1);
+```
+   (1) packaged_task<ReturnType> bound to f(args...)
+   (2) future = task.get_future()
+   (3) enqueue lambda: [task]{ (*task)(); }
+   (4) notify_one()
 
-// Split work across workers
-size_t chunk_size = N / pool.num_workers();
-std::vector<std::future<long long>> futures;
-
-for (size_t i = 0; i < pool.num_workers(); ++i) {
-    size_t start = i * chunk_size;
-    size_t end = (i == pool.num_workers() - 1) ? N : (i + 1) * chunk_size;
-    
-    futures.push_back(pool.submit([&numbers, start, end]() {
-        long long sum = 0;
-        for (size_t j = start; j < end; ++j) {
-            sum += numbers[j];
-        }
-        return sum;
-    }));
-}
-
-// Collect results
-long long total = 0;
-for (auto& future : futures) {
-    total += future.get();
-}
-
-std::cout << "Sum: " << total << "\n";
+   caller thread                         worker thread
+        │                                      │
+        ├─ returns future immediately          ├─ runs lambda
+        ├─ future.get() blocks ────────────────┼─ sets value/exception
 ```
 
-### Parallel For
+`shared_ptr` on the packaged_task keeps it alive until the worker runs.
 
-```cpp
-ThreadPool pool(8);
-ParallelFor pfor(pool);
+### 4.3 Graceful shutdown
 
-std::vector<int> data(1000);
+```
+   shutdown():
+       stop_ = true
+       notify_all()     // wake every sleeper
 
-// Process in parallel
-pfor.execute(0, data.size(), [&data](size_t i) {
-    data[i] = i * i;
-});
+   each worker:
+       wake → queue empty && stop_ → return from worker_thread()
 
-// All elements processed when execute() returns
+   join all workers_; clear vector
 ```
 
-### Exception Handling
+Destructor calls `shutdown()` — do not destroy the pool while tasks still need
+the pool object unless they are finished.
 
-```cpp
-ThreadPool pool(2);
+### 4.4 wait() for quiescence
 
-auto future = pool.submit([]() -> int {
-    throw std::runtime_error("Task failed");
-    return 0;
-});
-
-try {
-    future.get();  // Exception propagated here
-} catch (const std::runtime_error& e) {
-    std::cout << "Caught: " << e.what() << "\n";
-}
-
-// Pool continues working after exception
+```
+   spin:
+       lock; if tasks_.empty() && active_workers_==0: done
+       unlock; yield
 ```
 
-## API Reference
+Useful after `execute()` bursts; does not stop new `submit()` from other threads.
+
+### 4.5 Work stealing (optional pool)
+
+```
+   Worker i idle:
+       try own queue
+       else for j != i: try_lock(workers_[j]) and steal front task
+       else yield
+```
+
+Less global queue contention; more complex; destructor does not drain tasks.
+
+---
+
+## 5. API Reference
 
 ### ThreadPool
-
-```cpp
-// Constructor
-explicit ThreadPool(size_t num_threads = std::thread::hardware_concurrency());
-
-// Destructor (waits for all tasks)
-~ThreadPool();
-
-// Submit task with return value
-template<typename F, typename... Args>
-auto submit(F&& f, Args&&... args) 
-    -> std::future<typename std::result_of<F(Args...)>::type>;
-
-// Execute task without return value
-template<typename F>
-void execute(F&& f);
-
-// Wait for all queued tasks
-void wait();
-
-// Shutdown pool
-void shutdown();
-
-// Statistics
-size_t num_workers() const;
-size_t queued_tasks() const;
-size_t active_workers() const;
-size_t completed_tasks() const;
-bool is_stopped() const;
-```
+| Call | Effect |
+|---|---|
+| `ThreadPool(n)` | spawn n workers |
+| `submit(f, args...)` | enqueue; return `future` |
+| `execute(f)` | enqueue without future |
+| `wait()` | until queue empty and no active workers |
+| `shutdown()` | stop flag + join |
+| `num_workers()` | worker count |
+| `queued_tasks()` | snapshot queue size |
+| `active_workers()` | in-flight count |
+| `completed_tasks()` | finished count |
+| `is_stopped()` | shutdown flag |
 
 ### ParallelFor
+| Call | Effect |
+|---|---|
+| `execute(start, end, func)` | chunk range across `submit` |
 
-```cpp
-explicit ParallelFor(ThreadPool& pool);
-
-template<typename F>
-void execute(size_t start, size_t end, F&& func);
-```
-
-### TaskQueue<T>
-
-```cpp
-TaskQueue();
-
-void push(T value, int priority = 0);  // Higher priority = processed first
-bool pop(T& value);
-void stop();
-size_t size() const;
-```
+### TaskQueue\<T\>
+| Call | Effect |
+|---|---|
+| `push(v, priority)` | higher priority first |
+| `pop(v)` | block; false on stop+empty |
+| `stop()` | wake waiters |
 
 ### WorkStealingThreadPool
+| Call | Effect |
+|---|---|
+| `submit(f)` | round-robin to worker queue |
+| `num_workers()` | worker count |
+
+---
+
+## 6. Complexity Summary
+
+| Operation | Complexity | Note |
+|---|---|---|
+| `submit` / `execute` | O(1) | queue push + notify |
+| worker pop | O(1) | FIFO pop |
+| task execution | depends on user | runs outside mutex |
+| `wait` | O(ready spins) | polls queue + active count |
+| `shutdown` | O(workers) | join each thread |
+| `ParallelFor` | O(workers) submits | + user func cost |
+
+---
+
+## 7. Usage
 
 ```cpp
-explicit WorkStealingThreadPool(size_t num_threads = std::thread::hardware_concurrency());
+#include "thread_pool/thread_pool.hpp"
 
-template<typename F>
-void submit(F&& f);
-
-size_t num_workers() const;
-```
-
-## Performance
-
-**Benchmark**: Parallel sum of 1,000,000 integers
-
-| Workers | Time  | Speedup |
-|---------|-------|---------|
-| 1       | 4 ms  | 1.0x    |
-| 2       | 2 ms  | 2.0x    |
-| 4       | 1 ms  | 4.0x    |
-| 8       | 0.5 ms| 8.0x    |
-
-**Task Submission Overhead**: ~1-2 μs per task
-
-**Memory**: ~1 KB per worker thread + task queue overhead
-
-## Use Cases
-
-### 1. Parallel File Processing
-
-```cpp
-ThreadPool pool(8);
-std::vector<std::string> files = get_file_list();
-
-std::vector<std::future<ProcessResult>> futures;
-for (const auto& file : files) {
-    futures.push_back(pool.submit([file]() {
-        return process_file(file);
-    }));
-}
-
-for (auto& future : futures) {
-    ProcessResult result = future.get();
-    // Handle result...
-}
-```
-
-### 2. Web Server Request Handling
-
-```cpp
-ThreadPool pool(16);
-
-void handle_connection(Socket socket) {
-    pool.execute([socket]() {
-        Request req = read_request(socket);
-        Response resp = process_request(req);
-        send_response(socket, resp);
-    });
-}
-```
-
-### 3. Image Processing Pipeline
-
-```cpp
 ThreadPool pool(4);
+
+auto fut = pool.submit([](int a, int b) { return a + b; }, 10, 20);
+int sum = fut.get();
+
+pool.execute([&]() { /* fire and forget */ });
+pool.wait();
+
 ParallelFor pfor(pool);
+std::vector<int> data(1000);
+pfor.execute(0, data.size(), [&](size_t i) { data[i] = i * i; });
 
-void process_image(Image& img) {
-    pfor.execute(0, img.height(), [&](size_t row) {
-        for (size_t col = 0; col < img.width(); ++col) {
-            img.set_pixel(row, col, apply_filter(img.get_pixel(row, col)));
-        }
-    });
-}
+pool.shutdown();  // optional — destructor does this
 ```
 
-### 4. Batch Data Processing
+See [`thread_pool_example.cpp`](thread_pool_example.cpp) for futures, parallel sum,
+`ParallelFor`, and fire-and-forget counters.
 
-```cpp
-ThreadPool pool(8);
+---
 
-void process_batch(const std::vector<Data>& batch) {
-    std::vector<std::future<void>> futures;
-    
-    for (const auto& item : batch) {
-        futures.push_back(pool.submit([item]() {
-            validate(item);
-            transform(item);
-            save_to_db(item);
-            return;
-        }));
-    }
-    
-    // Wait for all
-    for (auto& f : futures) f.wait();
-}
-```
+## 8. Design Decisions & Trade-offs
 
-## Design Decisions
+- **Single FIFO queue.** Simple and correct; can contend under many producers.
+  `WorkStealingThreadPool` trades complexity for per-worker queues.
+- **Execute outside mutex.** Required for throughput and re-entrant `submit()`.
+- **Exception in worker swallowed.** Pool survives; `submit` futures still receive
+  `exception_ptr` via `packaged_task`.
+- **`notify_one` on enqueue.** Wakes one sleeper; thundering herd avoided vs `notify_all`.
+- **No task cancellation.** Once enqueued, task runs unless process exits.
+- **C++14 `std::result_of`.** Matches codebase standard; C++17 would use `invoke_result`.
 
-### Why Thread Pool?
+---
 
-1. **Reduce Overhead**: Reuse threads instead of creating/destroying
-2. **Limit Concurrency**: Control number of concurrent tasks
-3. **Load Balancing**: Distribute work evenly
-4. **Resource Management**: Prevent thread explosion
+## 9. Common Pitfalls
 
-### Task Queue vs Work Stealing
+- **Capturing references in tasks.** `submit([&x](){...})` dangles if `x` leaves scope
+  before `future.get()` — capture by value or `shared_ptr`.
+- **Deadlock via nested wait.** Task waits on a future that only the same pool can
+  run → starvation if all workers blocked (use separate pool or don't block inside tasks).
+- **Destroying pool with pending work.** Destructor shuts down and joins, but objects
+  captured by tasks must outlive execution.
+- **`wait()` vs `shutdown()`.** `wait()` is quiescence snapshot; does not prevent new
+  submissions from other threads.
+- **Tiny tasks.** Submission overhead (~μs) dominates if body is nanoseconds — batch work.
 
-**Standard Thread Pool** (single shared queue):
-- ✅ Simple implementation
-- ✅ Good for uniform tasks
-- ❌ Queue contention under high load
+---
 
-**Work Stealing** (per-worker queues):
-- ✅ Less contention
-- ✅ Better cache locality
-- ✅ Adaptive load balancing
-- ❌ More complex
+## 10. Comparison with `std::async` / `std::thread`
 
-Choose based on workload characteristics.
+**vs `std::async`:** pool reuses threads and caps concurrency; `async` may spawn new
+threads unpredictably (implementation-defined).
 
-### When NOT to Use
+**vs manual `std::thread` per task:** pool amortizes thread creation and limits load.
 
-- Very short tasks (< 1 μs) - overhead dominates
-- Tasks with heavy synchronization - defeats parallelism
-- I/O-bound tasks - consider async I/O instead
-- Single-threaded bottleneck - won't help
+**Not a full executor:** no priorities in main `ThreadPool`, no continuation chains,
+no integration with coroutines.
 
-## Implementation Details
+---
 
-### Worker Thread Lifecycle
+## 11. Build & Run
 
-```cpp
-void worker_thread() {
-    while (true) {
-        // 1. Wait for task or stop signal
-        std::unique_lock<std::mutex> lock(mutex_);
-        condition_.wait(lock, [this] {
-            return stop_ || !tasks_.empty();
-        });
-        
-        // 2. Check for shutdown
-        if (stop_ && tasks_.empty()) return;
-        
-        // 3. Get task
-        task = std::move(tasks_.front());
-        tasks_.pop();
-        lock.unlock();
-        
-        // 4. Execute task
-        task();
-    }
-}
-```
-
-### Future-based Return Values
-
-Uses `std::packaged_task` to wrap callable and provide `std::future`:
-
-```cpp
-auto task = std::make_shared<std::packaged_task<return_type()>>(
-    std::bind(f, args...)
-);
-std::future<return_type> result = task->get_future();
-
-tasks_.emplace([task]() { (*task)(); });
-
-return result;
-```
-
-### Exception Safety
-
-- Exceptions in tasks caught and stored in future
-- Worker threads continue running after exception
-- No memory leaks on exception
-
-### Shutdown Behavior
-
-1. Set stop flag
-2. Wake all workers
-3. Workers finish current tasks
-4. Workers exit when queue empty
-5. Join all threads
-
-## Testing
-
-Run the test suite:
 ```bash
-make test-thread-pool
+make run-thread-pool       # build + run the examples
+make test-thread-pool      # build + run the unit tests
+make all                   # build everything in the repo
 ```
 
-Run examples:
+Manual compile from repo root:
+
 ```bash
-make run-thread-pool
+g++ -std=c++14 -Wall -Wextra -Wpedantic -pthread -I. \
+    thread_pool/thread_pool_example.cpp -o /tmp/x_thread_pool
 ```
 
-**Test Coverage**: 29 tests covering:
-- Thread pool creation
-- Task submission with return values
-- Tasks with parameters
-- Multiple tasks
-- Fire-and-forget execution
-- Wait for completion
-- Parallel computation
-- Parallel for loops
-- Exception handling
-- Statistics tracking
-- Shutdown behavior
-- Concurrent task submission
-- Priority task queue
-- Work stealing pool
+---
 
-## Comparison with Alternatives
+## 12. See Also
 
-| Feature                  | ThreadPool | std::async | Manual Threads |
-|-------------------------|------------|------------|----------------|
-| Thread reuse            | ✅         | ❌         | ❌             |
-| Limit concurrency       | ✅         | ❌         | Manual         |
-| Future support          | ✅         | ✅         | Manual         |
-| Exception handling      | ✅         | ✅         | Manual         |
-| Statistics              | ✅         | ❌         | Manual         |
-| Ease of use             | ✅         | ✅         | ❌             |
-| Performance             | High       | Medium     | High           |
-
-## Advanced Usage
-
-### Custom Number of Workers
-
-```cpp
-// Use all CPU cores
-ThreadPool pool(std::thread::hardware_concurrency());
-
-// Use half the cores (for hybrid workloads)
-ThreadPool pool(std::thread::hardware_concurrency() / 2);
-
-// Fixed number
-ThreadPool pool(4);
-```
-
-### Priority Task Queue
-
-```cpp
-TaskQueue<std::function<void()>> queue;
-
-queue.push(low_priority_task, 1);
-queue.push(high_priority_task, 10);
-queue.push(medium_priority_task, 5);
-
-// Tasks processed: high → medium → low
-```
-
-### Work Stealing Pool
-
-```cpp
-WorkStealingThreadPool pool(8);
-
-// Submit tasks (distributed across workers)
-for (int i = 0; i < 1000; ++i) {
-    pool.submit([i]() {
-        process(i);
-    });
-}
-
-// Idle workers steal from busy workers
-```
-
-### Nested Parallelism
-
-```cpp
-ThreadPool outer_pool(4);
-ThreadPool inner_pool(2);
-
-outer_pool.execute([&inner_pool]() {
-    // Outer task can use inner pool
-    inner_pool.execute([]() {
-        // Inner task
-    });
-});
-```
-
-**Warning**: Be careful with nested pools to avoid deadlock.
-
-## Limitations
-
-1. **No Task Cancellation**: Cannot cancel submitted tasks
-2. **No Task Priority** (standard pool): All tasks equal priority
-3. **No Task Dependencies**: Manual coordination required
-4. **Fixed Worker Count**: Cannot dynamically adjust
-
-## Best Practices
-
-1. **Choose Appropriate Worker Count**: Usually = # CPU cores
-2. **Batch Small Tasks**: Group tiny tasks to reduce overhead
-3. **Avoid Blocking**: Don't block in tasks (defeats parallelism)
-4. **Handle Exceptions**: Always handle exceptions in task code
-5. **Use `wait()`**: Ensure completion before accessing results
-6. **Shutdown Properly**: Use RAII or explicit shutdown
-
-## Thread Safety Guarantees
-
-- **submit()**: Thread-safe ✅
-- **execute()**: Thread-safe ✅
-- **wait()**: Thread-safe ✅
-- **shutdown()**: Thread-safe ✅
-- **Statistics**: Thread-safe ✅
-- **Tasks**: Execute serially (no concurrent execution of same task) ✅
-
-## Common Patterns
-
-### Map-Reduce
-
-```cpp
-// Map phase
-std::vector<std::future<int>> futures;
-for (const auto& item : data) {
-    futures.push_back(pool.submit([item]() {
-        return map(item);
-    }));
-}
-
-// Reduce phase
-int result = 0;
-for (auto& future : futures) {
-    result = reduce(result, future.get());
-}
-```
-
-### Pipeline
-
-```cpp
-std::queue<Data> stage1_output;
-std::mutex stage1_mutex;
-
-// Stage 1: Read
-pool.execute([&]() {
-    for (auto& item : input) {
-        std::lock_guard<std::mutex> lock(stage1_mutex);
-        stage1_output.push(process_stage1(item));
-    }
-});
-
-// Stage 2: Transform
-pool.execute([&]() {
-    while (!done) {
-        Data item;
-        {
-            std::lock_guard<std::mutex> lock(stage1_mutex);
-            if (stage1_output.empty()) continue;
-            item = stage1_output.front();
-            stage1_output.pop();
-        }
-        process_stage2(item);
-    }
-});
-```
-
-### Divide and Conquer
-
-```cpp
-int parallel_sum(ThreadPool& pool, std::vector<int>& data, 
-                 size_t start, size_t end) {
-    if (end - start < 1000) {
-        // Base case: sequential
-        return std::accumulate(data.begin() + start, 
-                              data.begin() + end, 0);
-    }
-    
-    // Recursive case: parallel
-    size_t mid = (start + end) / 2;
-    auto left_future = pool.submit([&]() {
-        return parallel_sum(pool, data, start, mid);
-    });
-    auto right_future = pool.submit([&]() {
-        return parallel_sum(pool, data, mid, end);
-    });
-    
-    return left_future.get() + right_future.get();
-}
-```
-
-## Debugging Tips
-
-1. **Enable Logging**: Add debug prints in tasks
-2. **Check Statistics**: Use `queued_tasks()`, `active_workers()`
-3. **Deadlock**: Ensure tasks don't wait for each other
-4. **Race Conditions**: Use proper synchronization
-5. **Exception Tracking**: Always catch exceptions in tasks
-
-## Performance Tuning
-
-1. **Worker Count**: Experiment with different counts
-2. **Task Granularity**: Balance overhead vs parallelism
-3. **Memory Locality**: Keep related data close
-4. **Minimize Contention**: Reduce shared state
-5. **Profile**: Use profiler to find bottlenecks
-
-## License
-
-Part of the Custom STL Implementation Project
-
+- [`locks`](../locks/README.md) — mutex and condition_variable primitives used here
+- [`arena_allocator`](../arena_allocator/README.md) — fast per-thread alloc for task scratch
+- [`allocator`](../allocator/README.md) — general allocation strategies
+- [`vector`](../vector/README.md) — containers often processed via `ParallelFor`

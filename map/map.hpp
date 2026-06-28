@@ -6,31 +6,72 @@
 #include <functional>
 #include <initializer_list>
 
-/**
- * @brief Custom implementation of std::map using Red-Black Tree
- * 
- * Map is an ordered container of key-value pairs with unique keys.
- * 
- * Key characteristics:
- * - Keys are sorted (default: ascending order)
- * - No duplicate keys
- * - O(log n) insertion, deletion, and search
- * - Bidirectional iterators
- * - Implemented using Red-Black Tree
- */
+// ============================================================================
+//  Map<Key,T> -- a hand-rolled std::map (ordered unique keys, Red-Black Tree)
+// ============================================================================
+//
+// WHAT IT IS
+// ----------
+// A Map associates each key with at most one value, kept in sorted key order.
+// Like Set, the backbone is a Red-Black BST — O(log n) insert, erase, lookup.
+// The difference: each node holds a std::pair<const Key, T> (key + mapped value).
+//
+// THE FOUR FIELDS
+// ---------------
+//     root_   -> BST root (nil_ when empty)
+//     nil_    -> BLACK sentinel replacing nullptr leaves
+//     size_   -> number of key-value pairs
+//     comp_   -> compares KEYS only (default std::less<Key>)
+//
+// NODE LAYOUT (one map entry)
+// ---------------------------
+//
+//     ┌─────────────────────────────────┐
+//     │  value: { key: "Alice",         │
+//     │           val: 30 }             │  ◀── ordering uses key only
+//     │  color: RED | BLACK             │
+//     │  left / right / parent          │
+//     └─────────────────────────────────┘
+//
+// TREE EXAMPLE (keys inserted: Bob, Alice, Charlie)
+// -------------------------------------------------
+//
+//     Map object                 Tree sorted by key
+//     ┌──────────────┐
+//     │ root_   ●────┼──▶     ("Bob",25)
+//     │ nil_    ●    │       /           \
+//     │ size_ = 3    │  ("Alice",30)   ("Charlie",35)
+//     └──────────────┘
+//
+// In-order traversal visits pairs in ascending key order.
+//
+// RED-BLACK INVARIANTS (same as Set — see set.hpp banner for full diagrams)
+// -------------------------------------------------------------------------
+//   1–5: color rules, nil_ leaves, no consecutive REDs, equal black-height.
+//   These bound height to O(log n), making every tree walk cheap.
+//
+// operator[] vs at()
+// ------------------
+//   operator[]  → find key; if missing, insert {key, T()} and return .second
+//   at(key)     → find key; throw out_of_range if missing (no silent insert)
+//
+// Key characteristics:
+// - Unique keys, sorted by Compare on Key
+// - O(log n) insert / erase / find; bidirectional iterators over pairs
+// - Red-Black balancing with nil_ sentinel (identical fixup logic to Set)
+// ============================================================================
 
 template<typename Key, typename T, typename Compare = std::less<Key>>
 class Map {
 private:
     enum Color { RED, BLACK };
     
-    // Node structure (stores key-value pair)
     struct Node {
-        std::pair<const Key, T> value;
-        Color color;
-        Node* left;
-        Node* right;
-        Node* parent;
+        std::pair<const Key, T> value;  // {key, mapped_value}; key is const
+        Color color;                    // RED on fresh insert, BLACK after fixup
+        Node* left;                     // left child or nil_
+        Node* right;                    // right child or nil_
+        Node* parent;                   // parent link (nil_ at root's parent slot)
         
         Node(const Key& k, const T& v, Color c = RED)
             : value(k, v), color(c), left(nullptr), right(nullptr), parent(nullptr) {}
@@ -39,11 +80,12 @@ private:
             : value(p.first, p.second), color(c), left(nullptr), right(nullptr), parent(nullptr) {}
     };
     
-    Node* root_;
-    Node* nil_;
-    size_t size_;
-    Compare comp_;
+    Node* root_;     // tree root; equals nil_ when empty
+    Node* nil_;      // sentinel leaf (BLACK, self-referential)
+    size_t size_;    // number of stored pairs
+    Compare comp_;   // strict weak ordering on Key (ignores mapped_type)
     
+    /** @brief Allocate nil_ sentinel (dummy key/value, BLACK, self-linked). */
     void init_nil() {
         nil_ = new Node(Key(), T(), BLACK);
         nil_->left = nil_;
@@ -52,6 +94,16 @@ private:
         root_ = nil_;
     }
     
+    /**
+     * @brief Left rotation around x (see set.hpp for full before/after diagram).
+     *
+     *         P              P
+     *         x      →       y
+     *        / \            / \
+     *       α   y          x   γ
+     *          / \        / \
+     *         β   γ      α   β
+     */
     void rotate_left(Node* x) {
         Node* y = x->right;
         x->right = y->left;
@@ -64,6 +116,7 @@ private:
         x->parent = y;
     }
     
+    /** @brief Right rotation — mirror of rotate_left. */
     void rotate_right(Node* x) {
         Node* y = x->left;
         x->left = y->right;
@@ -76,6 +129,12 @@ private:
         x->parent = y;
     }
     
+    /**
+     * @brief Post-insert Red-Black fixup (recolor / rotate cases A–C).
+     *
+     * Identical logic to Set::insert_fixup; compares use key half of value only.
+     * Uncle RED → recolor and climb; uncle BLACK → line/triangle rotations.
+     */
     void insert_fixup(Node* z) {
         while (z->parent->color == RED) {
             if (z->parent == z->parent->parent->left) {
@@ -115,6 +174,7 @@ private:
         root_->color = BLACK;
     }
     
+    /** @brief Rewire parent pointer from u to v (subtree swap helper). */
     void transplant(Node* u, Node* v) {
         if (u->parent == nil_) root_ = v;
         else if (u == u->parent->left) u->parent->left = v;
@@ -122,16 +182,24 @@ private:
         v->parent = u->parent;
     }
     
+    /** @brief Leftmost node in subtree (smallest key). */
     Node* minimum(Node* node) const {
         while (node->left != nil_) node = node->left;
         return node;
     }
     
+    /** @brief Rightmost node in subtree (largest key). */
     Node* maximum(Node* node) const {
         while (node->right != nil_) node = node->right;
         return node;
     }
     
+    /**
+     * @brief Post-delete fixup for extra-black deficit (see set.hpp diagram).
+     *
+     * Triggered when the spliced-out node y was BLACK; x may carry double-black
+     * until sibling recoloring/rotations restore equal black-height on all paths.
+     */
     void delete_fixup(Node* x) {
         while (x != root_ && x->color == BLACK) {
             if (x == x->parent->left) {
@@ -187,6 +255,7 @@ private:
         x->color = BLACK;
     }
     
+    /** @brief BST search by key; returns node or nil_. */
     Node* find_node(const Key& key) const {
         Node* current = root_;
         while (current != nil_) {
@@ -201,6 +270,7 @@ private:
         return nil_;
     }
     
+    /** @brief Deep copy subtree for copy ctor / assignment. */
     Node* copy_tree(Node* node, Node* parent, Node* other_nil) {
         if (node == other_nil) return nil_;
         Node* new_node = new Node(node->value.first, node->value.second, node->color);
@@ -210,6 +280,7 @@ private:
         return new_node;
     }
     
+    /** @brief Post-order delete of all real nodes. */
     void delete_tree(Node* node) {
         if (node != nil_) {
             delete_tree(node->left);
@@ -242,6 +313,11 @@ public:
         value_type* operator->() { return &node_->value; }
         const value_type* operator->() const { return &node_->value; }
         
+        /**
+         * @brief In-order successor by key (same algorithm as Set::iterator::operator++).
+         *
+         * Right subtree → minimum of right; else climb from right child chain.
+         */
         iterator& operator++() {
             if (node_->right != nil_) {
                 node_ = map_->minimum(node_->right);
@@ -268,7 +344,11 @@ public:
     
     using const_iterator = iterator;
     
-    // Constructors
+    // ============================================================================
+    // CONSTRUCTORS
+    // ============================================================================
+
+    /** @brief Default constructor — empty tree + nil_ sentinel. */
     Map() : root_(nullptr), nil_(nullptr), size_(0) {
         init_nil();
     }
@@ -323,7 +403,14 @@ public:
         return *this;
     }
     
-    // Element access
+    /**
+     * @brief Subscript: find key or insert default-constructed mapped_type.
+     *
+     *     ages["Alice"] = 30:
+     *       find "Alice" → miss → insert {"Alice", 0} → return ref to .second → assign 30
+     *
+     * Creates entry if absent (unlike at()). Mapped type must be default-constructible.
+     */
     T& operator[](const Key& key) {
         Node* node = find_node(key);
         if (node != nil_) {
@@ -333,6 +420,9 @@ public:
         return result.first->second;
     }
     
+    /**
+     * @brief Bounds-checked access; throws std::out_of_range if key missing.
+     */
     T& at(const Key& key) {
         Node* node = find_node(key);
         if (node == nil_) {
@@ -379,6 +469,11 @@ public:
         size_ = 0;
     }
     
+    /**
+     * @brief Insert {key,value} if key absent; insert_fixup on success.
+     *
+     * Compares keys only. Duplicate key → {iterator to existing, false}.
+     */
     std::pair<iterator, bool> insert(const value_type& value) {
         Node* parent = nil_;
         Node* current = root_;
@@ -412,6 +507,9 @@ public:
         return {iterator(new_node, nil_, this), true};
     }
     
+    /**
+     * @brief Erase by key (BST delete + optional delete_fixup); returns 0 or 1.
+     */
     size_type erase(const Key& key) {
         Node* z = find_node(key);
         if (z == nil_) return 0;

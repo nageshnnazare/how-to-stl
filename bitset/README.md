@@ -1,294 +1,280 @@
-# Bitset - Fixed-Size Bit Array
+# Bitset — Fixed-Size Packed Bit Array
 
-A C++ implementation of `std::bitset` - a container for efficiently storing and manipulating fixed-size sequences of bits.
+> A `Bitset<N>` is a compile-time-fixed array of N bits packed into machine
+> words. Setting, clearing, testing, or flipping bit `i` is a single shift and
+> mask on one `unsigned long` — not a byte per flag. Bitwise `&`, `|`, `^`, and
+> `~` run word-at-a-time, which is how permission masks, bloom filters, and
+> dense set operations are implemented in practice.
 
-## 📋 Overview
+This is a from-scratch reimplementation of `std::bitset` built for learning. The
+header is [`bitset.hpp`](bitset.hpp), runnable examples are in
+[`bitset_example.cpp`](bitset_example.cpp), and the test suite is in
+[`../tests/bitset_test.cpp`](../tests/bitset_test.cpp).
 
-`Bitset<N>` is a fixed-size array of N bits, stored compactly and efficiently. It provides convenient operations for bit manipulation, including bitwise logical operations, individual bit access, and counting. Unlike `vector<bool>`, the size is fixed at compile-time.
+---
 
-## 🎯 Key Features
+## 1. What It Is
 
-- **Compact Storage**: Multiple bits packed into single words (typically 64 bits)
-- **Fast Operations**: Bitwise operations on entire words at once
-- **Compile-time Size**: Size known at compile-time, no allocation
-- **Rich API**: Set, reset, flip, test, count operations
-- **Bitwise Operators**: AND, OR, XOR, NOT supported
-- **Query Methods**: `all()`, `any()`, `none()` for easy checking
+| Property | Value |
+|---|---|
+| Size | `N` bits, fixed at compile time |
+| Storage | `ceil(N / word_bits)` × `unsigned long` |
+| Single-bit ops | O(1) — one word index + one bitmask |
+| Bulk bitwise | O(W) where W = number of words |
+| Heap | None — `words_` lives inline in the object |
 
-## 🏗️ Implementation Details
+**Reach for a Bitset when** you need a compact boolean array of known size,
+feature flags, permission bits, adjacency rows, or set operations on a small universe.
 
-### Data Structure
+**Look elsewhere when** size is runtime (`vector<bool>`), the set is sparse and
+large (hash set), or you need mutable references to individual bits (`vector<bool>`
+proxy references).
+
+---
+
+## 2. Mental Model
+
+Logical bit indices map into a word array:
+
+```
+   Bitset<10>  (BITS_PER_WORD = 64, NUM_WORDS = 1)
+
+   words_[0]:
+   ┌──┬──┬──┬──┬──┬──┬──┬──┬──┬──┬─────────────────────────────┐
+   │b9│b8│b7│b6│b5│b4│b3│b2│b1│b0│  unused bits 10..63         │
+   └──┴──┴──┴──┴──┴──┴──┴──┴──┴──┴─────────────────────────────┘
+    9  8  7  6  5  4  3  2  1  0
+
+   bit i  →  word = i / 64 ,  offset = i % 64 ,  mask = 1UL << offset
+```
+
+For `N > 64`, bits continue in `words_[1]`, `words_[2]`, …:
+
+```
+   Bitset<100>:  words_[0] = bits 0..63 ,  words_[1] = bits 64..99 (+ padding)
+```
+
+---
+
+## 3. Internal Representation
+
 ```cpp
 template<std::size_t N>
 class Bitset {
-private:
     static constexpr size_t BITS_PER_WORD = sizeof(unsigned long) * 8;
     static constexpr size_t NUM_WORDS = (N + BITS_PER_WORD - 1) / BITS_PER_WORD;
-    unsigned long words_[NUM_WORDS];  // Packed storage
+    unsigned long words_[NUM_WORDS];
 };
 ```
 
-### Storage Efficiency
-- N=8: 1 word (64 bits), uses 8 bits → 12.5% utilized
-- N=64: 1 word (64 bits), uses 64 bits → 100% utilized
-- N=128: 2 words (128 bits), uses 128 bits → 100% utilized
+**Invariant:** Only the low `N` bits across `words_[0..NUM_WORDS-1]` are
+logical bitset bits. `operator~` masks the high garbage bits in the last partial
+word so they stay zero.
 
-### Complexity
-- **Set/Reset/Flip**: O(1) - Direct bit manipulation
-- **Test/Access**: O(1) - Direct lookup
-- **Count**: O(W) where W = number of words (N / 64)
-- **Bitwise ops**: O(W) - Word-by-word operations
-- **Space**: ⌈N / 64⌉ × 8 bytes
+### Indexing formula
 
-## 📚 Core Operations
+| Quantity | Formula |
+|---|---|
+| Word index | `pos / BITS_PER_WORD` |
+| Bit offset | `pos % BITS_PER_WORD` |
+| Mask | `1UL << bit_offset` |
+
+---
+
+## 4. How It Works (Step by Step)
+
+### 4.1 Default construction
+
+```
+   Bitset<N> bs;
+
+   for each word: words_[i] = 0    // all N bits clear
+```
+
+### 4.2 `set(pos, value)` — single-bit write
+
+```
+   word = pos / BITS_PER_WORD
+   bit  = pos % BITS_PER_WORD
+
+   if value:  words_[word] |=  (1UL << bit)    // set to 1
+   else:       words_[word] &= ~(1UL << bit)    // set to 0
+
+   pos >= N → no-op (silent)
+```
+
+### 4.3 `test(pos)` — single-bit read
+
+```
+   return (words_[word] & (1UL << bit)) != 0
+
+   pos >= N → false
+```
+
+### 4.4 `flip(pos)`
+
+```
+   words_[word] ^= (1UL << bit)    // toggle 0↔1
+```
+
+### 4.5 `count()` — population count
+
+```
+   for each word w:
+       while w:  count += w & 1;  w >>= 1
+```
+
+Walks every set bit in every word (teaching implementation; production code
+often uses hardware popcount).
+
+### 4.6 Word-level `&`, `|`, `^`
+
+```
+   result.words_[i] = words_[i] OP other.words_[i]   for i in 0..NUM_WORDS-1
+```
+
+One machine instruction per word for AND/OR/XOR on typical CPUs.
+
+### 4.7 `operator~` and the last-word mask
+
+When `N % 64 != 0`, high bits in the last word are not part of the bitset:
+
+```
+   ~all bits in words_
+   then:  last_word &= (1UL << (N % 64)) - 1   // keep only valid low bits
+```
+
+---
+
+## 5. API Reference
 
 ### Construction
-```cpp
-Bitset<8> bs1;              // All zeros: 00000000
-Bitset<8> bs2(42);          // From integer: 00101010
-Bitset<8> bs3(0b11110000);  // Binary literal: 11110000
-```
+| Call | Effect |
+|---|---|
+| `Bitset<N>()` | All bits 0 |
+| `Bitset<N>(unsigned long val)` | Low bits of `val` in `words_[0]` |
 
-### Setting Bits
-```cpp
-bs.set(0);           // Set bit 0 to 1
-bs.set(3, true);     // Set bit 3 to 1
-bs.set(5, false);    // Set bit 5 to 0
-bs.reset(2);         // Clear bit 2
-bs.flip(7);          // Toggle bit 7
-bs.reset();          // Clear all bits
-```
+### Single-bit modifiers
+| Call | Effect |
+|---|---|
+| `set(pos)` | Set bit to 1 |
+| `set(pos, false)` | Clear bit |
+| `reset(pos)` | Clear bit |
+| `reset()` | Clear all N bits |
+| `flip(pos)` | Toggle bit |
 
-### Testing Bits
-```cpp
-bool bit = bs.test(3);       // Safe test
-bool bit = bs[3];            // Array-style access
-```
+### Observers
+| Call | Effect |
+|---|---|
+| `test(pos)` | Safe test; false if `pos >= N` |
+| `operator[](pos)` | Same as `test` (no mutable proxy) |
+| `count()` | Number of 1-bits |
+| `size()` | `N` (constexpr) |
+| `all()`, `any()`, `none()` | Query helpers via `count()` |
 
-### Querying
-```cpp
-size_t n = bs.count();       // Number of 1s
-bool full = bs.all();        // All bits set?
-bool some = bs.any();        // At least one bit set?
-bool empty = bs.none();      // No bits set?
-size_t sz = bs.size();       // Total number of bits
-```
+### Bitwise (non-member syntax via member ops)
+| Operator | Effect |
+|---|---|
+| `a & b` | Intersection |
+| `a \| b` | Union |
+| `a ^ b` | Symmetric difference |
+| `~a` | Complement within N bits |
 
-### Bitwise Operations
-```cpp
-auto result1 = bs1 & bs2;    // AND
-auto result2 = bs1 | bs2;    // OR
-auto result3 = bs1 ^ bs2;    // XOR
-auto result4 = ~bs1;         // NOT
-```
+All mutators return `Bitset&` for chaining: `bs.set(0).set(3).flip(1)`.
 
-## 🚀 Usage Examples
+---
 
-### Basic Bit Manipulation
+## 6. Complexity Summary
+
+| Operation | Complexity | Note |
+|---|---|---|
+| `set` / `reset` / `flip` / `test` | O(1) | One word |
+| `reset()` (all) | O(W) | W = NUM_WORDS |
+| `count`, `all`, `any`, `none` | O(W × word_bits) worst | This implementation |
+| `&`, `\|`, `^`, `~` | O(W) | Word loop |
+| Space | O(W) words | W = ⌈N / 64⌉ typically |
+
+---
+
+## 7. Usage
+
 ```cpp
+#include "bitset/bitset.hpp"
+
 Bitset<8> flags;
-flags.set(0);       // Set bit 0
-flags.set(7);       // Set bit 7
-// flags = 10000001
+flags.set(0).set(7);           // bits 0 and 7 on
 
-if (flags.test(0)) {
-    std::cout << "Bit 0 is set\n";
-}
-```
+if (flags.test(0)) { /* ... */ }
 
-### Flags and Permissions
-```cpp
-const size_t READ = 0;
-const size_t WRITE = 1;
-const size_t EXECUTE = 2;
-
-Bitset<8> permissions;
-permissions.set(READ).set(WRITE);  // Chaining
-
-if (permissions[READ] && permissions[WRITE]) {
-    // Can read and write
-}
-```
-
-### Bitwise Logic
-```cpp
 Bitset<8> a(0b11110000);
 Bitset<8> b(0b10101010);
+auto both = a & b;
 
-auto intersection = a & b;  // 10100000
-auto union_bits = a | b;    // 11111010
-auto xor_bits = a ^ b;      // 01011010
-auto complement = ~a;       // 00001111
+std::size_t ones = flags.count();
+bool every = flags.all();
 ```
 
-### Masking
-```cpp
-Bitset<8> data(0b11011010);
-Bitset<8> mask(0b11110000);  // Upper nibble mask
+See [`bitset_example.cpp`](bitset_example.cpp) for construction, manipulation,
+bitwise logic, queries, permissions, masking, set algebra, 64-bit layouts, and
+a bloom-filter sketch.
 
-auto upper = data & mask;    // Extract upper 4 bits: 11010000
-auto lower = data & ~mask;   // Extract lower 4 bits: 00001010
-```
+---
 
-### Set Operations
-```cpp
-// Think of bits as set membership
-Bitset<8> set_a(0b00001111);  // Elements {0, 1, 2, 3}
-Bitset<8> set_b(0b00110011);  // Elements {0, 1, 4, 5}
+## 8. Design Decisions & Trade-offs
 
-auto union_ab = set_a | set_b;        // A ∪ B
-auto intersection = set_a & set_b;    // A ∩ B
-auto difference = set_a & ~set_b;     // A - B
-auto symmetric = set_a ^ set_b;       // A △ B
-```
+- **`unsigned long` words** — matches typical `std::bitset` word type on Unix;
+  size is platform-defined (often 64 bits on LP64).
+- **Silent no-op on out-of-range `set`/`flip`** — matches common std behavior
+  for mutators; `test` returns `false`.
+- **No mutable `operator[]`** — returns `bool` by value, not a bit proxy like
+  `std::bitset::reference` (simpler teaching code).
+- **Shift-loop `count()`** — clear and portable; not using `popcnt` intrinsics.
+- **Fixed `N`** — enables stack storage and compile-time size in the type.
 
-## 🔍 When to Use
+---
 
-### Use Bitset When:
-- ✅ Need compact boolean array
-- ✅ Size known at compile-time
-- ✅ Frequent bitwise operations
-- ✅ Implementing flags/permissions
-- ✅ Set operations on fixed universe
-- ✅ Bit masks and filters
+## 9. Common Pitfalls
 
-### Use Other Containers When:
-- ❌ Size needs to change → Use `vector<bool>` or custom
-- ❌ Need individual addressability → Use `vector<bool>`
-- ❌ Very large, sparse sets → Use hash set
-- ❌ Need efficient iteration over set bits → Use specialized structure
+- **Unused bits in the last word.** Never assume `words_[last]` uses all 64 bits
+  when `N % 64 != 0`; `~` relies on masking.
+- **`operator[]` is read-only here.** You cannot assign through `bs[i] = true`;
+  use `set(i)`.
+- **Platform word size.** `BITS_PER_WORD` follows `unsigned long`; portable code
+  should not hard-code 64 without checking.
+- **`all()` on empty `Bitset<0>`** — edge case: vacuously true in math; verify
+  behavior if you use `N == 0`.
 
-## 🆚 Comparison with Alternatives
+---
 
-| Feature | Bitset<N> | vector<bool> | bool[N] | int flags |
-|---------|-----------|--------------|---------|-----------|
-| **Size** | Compile-time | Runtime | Compile-time | Fixed |
-| **Packed** | ✅ Yes | ✅ Yes | ❌ No | ⚠️ Manual |
-| **Operations** | Rich API | Limited | Manual | Manual |
-| **Space** | N/8 bytes | N/8 bytes | N bytes | 4-8 bytes |
-| **Type Safe** | ✅ Yes | ✅ Yes | ✅ Yes | ❌ No |
+## 10. Comparison with `std::bitset`
 
-## 🎓 Special Features
+**Same:** fixed N, word packing, bit index arithmetic, bitwise ops, `count`,
+`all`/`any`/`none`.
 
-### Chaining Operations
-```cpp
-Bitset<8> bs;
-bs.set(0).set(2).set(4).flip(1);  // Chain multiple ops
-```
+**Intentionally omitted:** `to_string`, `to_ulong`, `to_ullong`, stream I/O,
+`find`, `flip()` without position, and proxy references for `operator[]`.
 
-### Word-level Efficiency
-```cpp
-// For Bitset<64>, operations work on single 64-bit word
-Bitset<64> a, b;
-auto result = a & b;  // Single AND instruction!
-```
+---
 
-### Compile-time Optimization
-```cpp
-// Compiler knows exact size, can optimize aggressively
-constexpr size_t N = 64;
-Bitset<N> bs;  // Size baked into type
-```
-
-## 💡 Best Practices
-
-1. **Use Meaningful Constants**: Define named constants for bit positions
-2. **Chain Operations**: Use `.set().set()` for readability
-3. **Prefer test() for Safety**: Use `test()` over `[]` for bounds checking
-4. **Use Bitwise Ops**: Leverage `&`, `|`, `^` for complex logic
-5. **Size Appropriately**: Round up to multiples of 64 for efficiency
-
-## 📊 Common Use Cases
-
-### 1. Feature Flags
-```cpp
-enum Feature { DARK_MODE = 0, NOTIFICATIONS = 1, ANALYTICS = 2 };
-Bitset<8> enabled_features;
-enabled_features.set(DARK_MODE).set(NOTIFICATIONS);
-```
-
-### 2. Game State
-```cpp
-Bitset<256> level_completed;  // 256 levels
-level_completed.set(42);      // Beat level 42
-if (level_completed.all()) {
-    unlock_secret();
-}
-```
-
-### 3. Bloom Filter
-```cpp
-Bitset<1024> bloom;
-// Insert: set multiple hash positions
-bloom.set(hash1(item)).set(hash2(item)).set(hash3(item));
-// Query: check all hash positions
-bool maybe_present = bloom[hash1(item)] && bloom[hash2(item)] && bloom[hash3(item)];
-```
-
-### 4. Graph Adjacency
-```cpp
-template<size_t N>
-using AdjMatrix = std::array<Bitset<N>, N>;
-
-AdjMatrix<100> graph;
-graph[5].set(10);  // Edge from vertex 5 to 10
-```
-
-### 5. Sudoku Solver
-```cpp
-Bitset<9> row_used;     // Which digits used in row
-Bitset<9> col_used;     // Which digits used in col
-Bitset<9> box_used;     // Which digits used in box
-auto available = ~(row_used | col_used | box_used);
-```
-
-## 🔗 API Reference
-
-| Method | Description | Time |
-|--------|-------------|------|
-| `Bitset()` | Construct all zeros | O(W) |
-| `Bitset(val)` | Construct from integer | O(1) |
-| `set(pos)` | Set bit to 1 | O(1) |
-| `reset(pos)` | Clear bit to 0 | O(1) |
-| `flip(pos)` | Toggle bit | O(1) |
-| `test(pos)` | Test bit value | O(1) |
-| `operator[]` | Access bit | O(1) |
-| `count()` | Count set bits | O(W) |
-| `all()` | All bits set? | O(W) |
-| `any()` | Any bit set? | O(W) |
-| `none()` | No bits set? | O(W) |
-| `size()` | Number of bits | O(1) |
-| `operator&` | Bitwise AND | O(W) |
-| `operator\|` | Bitwise OR | O(W) |
-| `operator^` | Bitwise XOR | O(W) |
-| `operator~` | Bitwise NOT | O(W) |
-
-*W = number of words = ⌈N / 64⌉*
-
-## 🏃 Building and Running
+## 11. Build & Run
 
 ```bash
-# Compile example
-make bitset-example
-
-# Run example
-make run-bitset
-
-# Run tests
-make test-bitset
+make run-bitset     # build + run the examples
+make test-bitset    # build + run the unit tests
+make all            # build everything in the repo
 ```
 
-## 🌟 Advantages
+From the repo root:
 
-- **Memory Efficient**: 8x more compact than `bool[]`
-- **Fast**: Word-level operations, cache-friendly
-- **Type Safe**: Size checked at compile-time
-- **Expressive**: Rich API for common patterns
-- **Zero Overhead**: No runtime indirection
+```bash
+g++ -std=c++14 -Wall -Wextra -Wpedantic -I. bitset/bitset_example.cpp -o /tmp/x_bitset
+/tmp/x_bitset
+```
 
-## 📖 See Also
+---
 
-- **Array**: For non-boolean fixed-size arrays
-- **Vector**: For dynamic-size containers
-- **Set**: For sparse bit sets with large universe
+## 12. See Also
 
+- [`array`](../array/README.md) — fixed-size array of full objects, not bits
+- [`vector`](../vector/README.md) — dynamic size; `vector<bool>` is also bit-packed
+- [`set`](../set/README.md) — sparse ordered keys when the universe is huge

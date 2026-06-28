@@ -1,11 +1,154 @@
+/**
+ * @file unordered_set_test.cpp
+ * @brief Test suite for the UnorderedSet (hash table, separate chaining).
+ *
+ * Note: this teaching build intentionally exposes no iteration API, so tests
+ * use insert / contains / count / erase / size.
+ */
+
 #include "unordered_set/unordered_set.hpp"
 #include <iostream>
+#include <string>
+
 int main() {
-    UnorderedSet<int> us = {1, 2, 3, 4, 5};
-    std::cout << "UnorderedSet test: size=" << us.size() << ", contains(3)=" << us.contains(3) << "\n";
-    if (us.size() == 5 && us.contains(3)) {
-        std::cout << "✓ PASSED\n";
-        return 0;
+    std::cout << "=================================================\n";
+    std::cout << "    UnorderedSet Implementation Test Suite      \n";
+    std::cout << "=================================================\n\n";
+
+    int passed = 0, total = 11;
+
+    // Test 1: insert returns true for new, false for duplicate
+    std::cout << "Test 1: insert return value... ";
+    {
+        UnorderedSet<int> s;
+        if (!s.insert(5)) { std::cout << "FAILED\n"; return 1; }
+        if (s.insert(5)) { std::cout << "FAILED\n"; return 1; }  // duplicate
+        if (s.size() != 1) { std::cout << "FAILED\n"; return 1; }
     }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 2: contains
+    std::cout << "Test 2: contains()... ";
+    {
+        UnorderedSet<int> s = {1, 2, 3};
+        if (!s.contains(2) || s.contains(99)) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 3: count is always 0 or 1
+    std::cout << "Test 3: count() 0/1... ";
+    {
+        UnorderedSet<int> s = {7, 8};
+        if (s.count(7) != 1 || s.count(123) != 0) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 4: erase existing returns 1 and shrinks
+    std::cout << "Test 4: erase existing... ";
+    {
+        UnorderedSet<int> s = {1, 2, 3};
+        if (s.erase(2) != 1 || s.contains(2) || s.size() != 2) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 5: erase absent returns 0
+    std::cout << "Test 5: erase absent... ";
+    {
+        UnorderedSet<int> s = {1, 2, 3};
+        if (s.erase(42) != 0 || s.size() != 3) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 6: init-list dedups identical values
+    std::cout << "Test 6: init-list dedup... ";
+    {
+        UnorderedSet<int> s = {4, 4, 4, 5};
+        if (s.size() != 2) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 7: empty / clear
+    std::cout << "Test 7: empty/clear... ";
+    {
+        UnorderedSet<int> s = {1, 2};
+        if (s.empty()) { std::cout << "FAILED\n"; return 1; }
+        s.clear();
+        if (!s.empty() || s.size() != 0 || s.contains(1)) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 8: rehash correctness under heavy load (forces bucket growth)
+    std::cout << "Test 8: rehash with 1000 elements... ";
+    {
+        UnorderedSet<int> s;
+        for (int i = 0; i < 1000; ++i) s.insert(i);
+        if (s.size() != 1000) { std::cout << "FAILED\n"; return 1; }
+        bool all = true;
+        for (int i = 0; i < 1000; ++i) if (!s.contains(i)) all = false;
+        if (!all || s.contains(1000)) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 9: string keys
+    std::cout << "Test 9: string keys... ";
+    {
+        UnorderedSet<std::string> s = {"alpha", "beta"};
+        s.insert("gamma");
+        if (!s.contains("beta") || !s.contains("gamma") || s.contains("delta")) {
+            std::cout << "FAILED\n"; return 1;
+        }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 10: re-insert after erase
+    std::cout << "Test 10: re-insert after erase... ";
+    {
+        UnorderedSet<int> s = {1};
+        s.erase(1);
+        if (!s.insert(1)) { std::cout << "FAILED\n"; return 1; }  // should be new again
+        if (s.size() != 1) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    // Test 11: many erases drain the set
+    std::cout << "Test 11: drain via erase... ";
+    {
+        UnorderedSet<int> s;
+        for (int i = 0; i < 100; ++i) s.insert(i);
+        for (int i = 0; i < 100; ++i) s.erase(i);
+        if (!s.empty()) { std::cout << "FAILED\n"; return 1; }
+    }
+    std::cout << "PASSED\n"; ++passed;
+
+    std::cout << "\n=================================================\n";
+    std::cout << "  RESULTS: " << passed << "/" << total << " tests passed\n";
+    std::cout << "=================================================\n";
+    if (passed == total) { std::cout << "\xE2\x9C\x93 All tests PASSED!\n"; return 0; }
+    std::cout << "\xE2\x9C\x97 Some tests FAILED\n";
     return 1;
 }
+
+/* ===== EXPECTED OUTPUT ============================================
+ * Auto-generated by running this program (see tests/README.md).
+ * ----------------------------------------------------------------------------
+=================================================
+    UnorderedSet Implementation Test Suite      
+=================================================
+
+Test 1: insert return value... PASSED
+Test 2: contains()... PASSED
+Test 3: count() 0/1... PASSED
+Test 4: erase existing... PASSED
+Test 5: erase absent... PASSED
+Test 6: init-list dedup... PASSED
+Test 7: empty/clear... PASSED
+Test 8: rehash with 1000 elements... PASSED
+Test 9: string keys... PASSED
+Test 10: re-insert after erase... PASSED
+Test 11: drain via erase... PASSED
+
+=================================================
+  RESULTS: 11/11 tests passed
+=================================================
+✓ All tests PASSED!
+ * ============================================================================ */

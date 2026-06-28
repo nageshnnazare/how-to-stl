@@ -1,146 +1,256 @@
-# List Implementation
+# List — Doubly-Linked Sequence
 
-Doubly linked list providing O(1) insertion/deletion at any position with iterator.
+> A `List<T>` stores each element in its own heap node, wired to its neighbors
+> with `prev` and `next` pointers — like a train where every car knows the car
+> in front and behind. You can add or remove at the ends in O(1) without moving
+> other elements, but finding element `i` by index requires walking the chain.
 
-## Features
-- **Doubly Linked**: Each node has prev and next pointers
-- **O(1) Insert/Erase**: With iterator (no reallocation)
-- **Bidirectional Iteration**: Forward and backward
-- **Stable Pointers**: Elements don't move in memory
-- **No Random Access**: Must traverse from beginning
+This is a from-scratch reimplementation of the core ideas behind `std::list`
+built for learning. The header is [`list.hpp`](list.hpp), runnable examples are
+in [`list_example.cpp`](list_example.cpp), and the test suite is in
+[`../tests/list_test.cpp`](../tests/list_test.cpp).
 
-## Quick Example
+---
 
-```cpp
-List<int> l;
-l.push_back(1);
-l.push_back(2);
-l.push_front(0);  // O(1) insert at front
+## 1. What It Is
 
-for (const auto& val : l) {
-    std::cout << val << " ";  // 0 1 2
-}
+| Property | Value |
+|---|---|
+| Storage | Scattered heap `Node`s linked by pointers |
+| Order | Insertion order along the chain |
+| Random access | **No** — no `operator[]` |
+| Grows | One `new Node` per `push_*` |
+| Object size | 3 words (`head_`, `tail_`, `size_`) on 64-bit |
+
+**Reach for a List when** you need stable element addresses, frequent
+insert/erase at positions you already have iterators to, or O(1) work at both
+ends without shifting (once extended with `insert`/`erase`).
+
+**Look elsewhere when** you mostly index or scan sequentially (see
+[`vector`](../vector/README.md)) — contiguous memory wins on cache.
+
+---
+
+## 2. Mental Model
+
+A list is a chain of nodes. The `List` object only holds pointers to the first
+and last node plus a count:
+
+```
+   List object                    Node chain on the heap
+   ┌─────────────────┐
+   │ head_  ●────────┼──▶ ┌─────────┐    ┌─────────┐    ┌─────────┐
+   │ tail_  ●────────┼──┐ │prev: ∅  │◀──▶│prev/next│◀──▶│next: ∅  │
+   │ size_  = 3      │  └─│data: A  │    │data: B  │    │data: C  │
+   └─────────────────┘    └─────────┘    └─────────┘    └─────────┘
+   end() == iterator(nullptr)  —  NOT a sentinel node
 ```
 
-## Operations
+- Each `Node` holds `T data`, `Node* prev`, `Node* next`.
+- Empty list: `head_ == tail_ == nullptr`, `size_ == 0`.
+- Iterators are raw `Node*` wrappers; `end()` is `nullptr`.
 
-- `push_front(value)` - Add to front (O(1))
-- `push_back(value)` - Add to back (O(1))
-- `pop_front()` - Remove from front (O(1))
-- `pop_back()` - Remove from back (O(1))
-- `front()`, `back()` - Access ends (O(1))
-- `size()`, `empty()` - Capacity queries (O(1))
-- `clear()` - Remove all elements (O(n))
+---
 
-## When to Use
+## 3. Internal Representation
 
-**Use List when:**
-- Frequent insertions/deletions in middle
-- Need stable iterators/pointers
-- Don't need random access
-- Implementing LRU cache, playlists
-
-**Use Vector when:**
-- Need random access
-- Mostly append operations
-- Want cache-friendly memory
-- Smaller memory overhead
-
-## Performance
-
-| Operation | Complexity | Notes |
-|-----------|-----------|-------|
-| push_front | O(1) | No reallocation |
-| push_back | O(1) | No reallocation |
-| pop_front | O(1) | - |
-| pop_back | O(1) | - |
-| insert (with iter) | O(1) | Constant time |
-| erase (with iter) | O(1) | Constant time |
-| access | O(n) | Must traverse |
-| search | O(n) | Linear scan |
-
-## Use Cases
-
-### 1. LRU Cache
-```cpp
-List<int> cache;
-// Move accessed item to front
-// Evict from back when full
-```
-
-### 2. Music Playlist
-```cpp
-List<std::string> playlist;
-playlist.push_back("Song A");
-playlist.push_back("Song B");
-// Can insert anywhere in O(1) with iterator
-```
-
-### 3. Undo/Redo with Deletion
-```cpp
-List<Action> history;
-// Can remove from middle efficiently
-```
-
-## Implementation Details
-
-**Node Structure:**
 ```cpp
 struct Node {
     T data;
     Node* prev;
     Node* next;
 };
+
+Node*   head_;   // first node, or nullptr
+Node*   tail_;   // last node, or nullptr
+size_t  size_;   // node count
 ```
 
-**Advantages:**
-- No reallocation on growth
-- O(1) insert/erase anywhere (with iterator)
-- Stable element addresses
+**Invariant:** walking `next` from `head_` exactly `size_` steps reaches
+`tail_`; `tail_->next == nullptr`; `head_->prev == nullptr`.
 
-**Disadvantages:**
-- No random access (no operator[])
-- More memory per element (2 pointers)
-- Poor cache locality
-- Extra pointer chasing
+### Per-element memory cost
 
-## Examples
+| Part | Cost |
+|---|---|
+| `T` object | `sizeof(T)` |
+| `prev` + `next` pointers | 16 bytes on 64-bit |
+| Allocation overhead | malloc metadata per node |
 
-See `list_example.cpp` for 10 examples:
-1. Basic operations
-2. Initializer list
-3. Bidirectional iteration
-4. Copy and move
-5. LRU cache simulation
-6. Music playlist
-7. List vs Vector comparison
-8. Empty and clear
-9. Double-ended operations
-10. List of strings
-
-Run:
-```bash
-./build/list_example
-```
-
-## Testing
-
-Run test suite:
-```bash
-./build/list_test
-```
-
-All 15 tests cover:
-- Push/pop operations
-- Front/back access
-- Iteration
-- Copy/move semantics
-- Edge cases
+Compare to vector: one pointer + contiguous `T` array — far better cache use.
 
 ---
 
-**Lines of Code**: 170+ (implementation) + 250+ (examples) + 180+ (tests)  
-**Test Coverage**: 15/15 tests passing ✅  
-**Complexity**: O(1) insert/erase with iterator, O(n) access  
-**Memory**: 2 pointers + data per element
+## 4. How It Works (Step by Step)
 
+### 4.1 `push_back` — append at tail
+
+```
+   empty list:
+       head_ = tail_ = new_node
+
+   non-empty:
+       tail_->next = new_node
+       new_node->prev = tail_
+       tail_ = new_node
+```
+
+```
+   before:  head ─▶ [A] ◀─▶ [B] ◀── tail
+   push_back(C):
+   after:   head ─▶ [A] ◀─▶ [B] ◀─▶ [C] ◀── tail
+```
+
+### 4.2 `push_front` — prepend at head
+
+Mirror of `push_back` on the head side:
+
+```
+   before:  head ─▶ [B] ◀── tail
+   push_front(A):
+   after:   head ─▶ [A] ◀─▶ [B] ◀── tail
+```
+
+### 4.3 `pop_front` / `pop_back` — unlink and delete
+
+```
+   pop_front:
+       old = head_;  head_ = head_->next
+       if head_: head_->prev = nullptr;  else tail_ = nullptr
+       delete old;  --size_
+```
+
+Only pointer updates — remaining nodes stay at the same addresses.
+
+### 4.4 Iteration
+
+```
+   for (it = begin(); it != end(); ++it)
+       it.node_ walks: head_->next->next->...->nullptr
+```
+
+Bidirectional: `--it` follows `prev` links.
+
+### 4.5 What full `std::list` adds (not in this minimal impl)
+
+A complete list also provides O(1) `insert`/`erase` at an iterator by splicing
+nodes in/out of the chain — the same pointer-rewiring idea as push/pop, but in
+the middle. This teaching version implements end operations only.
+
+---
+
+## 5. API Reference
+
+### Construction
+| Call | Effect |
+|---|---|
+| `List<T>()` | empty list |
+| `List<T>{a, b, c}` | initializer list |
+| copy / move ctor | deep copy / O(1) steal chain |
+| copy / move assign | replace contents |
+
+### Element access
+| Call | Notes |
+|---|---|
+| `front()` / `back()` | O(1); undefined if empty |
+| No `operator[]` | must iterate to reach index `i` |
+
+### Capacity
+`empty()`, `size()`
+
+### Modifiers
+`push_front`, `push_back`, `pop_front`, `pop_back`, `clear`
+
+### Iterators
+`begin()` → first node; `end()` → `nullptr` (bidirectional)
+
+---
+
+## 6. Complexity Summary
+
+| Operation | Complexity | Note |
+|---|---|---|
+| `push_front`, `push_back` | O(1) | one `new Node` |
+| `pop_front`, `pop_back` | O(1) | one `delete` |
+| `front`, `back` | O(1) | |
+| Access by index | O(n) | walk the chain |
+| Search | O(n) | linear scan |
+| `clear` | O(n) | delete every node |
+| copy | O(n) | clone all elements |
+| move | O(1) | steal pointers |
+
+---
+
+## 7. Usage
+
+```cpp
+#include "list/list.hpp"
+
+List<int> l;
+l.push_back(1);
+l.push_back(2);
+l.push_front(0);   // {0, 1, 2}
+
+for (int x : l) std::cout << x << ' ';
+
+l.pop_front();
+l.pop_back();
+```
+
+See [`list_example.cpp`](list_example.cpp) for LRU-style patterns, playlists,
+and list-vs-vector trade-offs.
+
+---
+
+## 8. Design Decisions & Trade-offs
+
+- **No sentinel node.** `end()` is `nullptr` — simpler allocation, but unlike
+  some textbook implementations that use a dummy head.
+- **Separate allocation per node.** Simple `new`/`delete`; a production list
+  might use an arena or cached node allocator.
+- **Doubly linked.** Extra pointer per node vs singly linked, but enables O(1)
+  `pop_back` and bidirectional iterators.
+- **Stable addresses.** A `Node*` (or iterator) stays valid when other nodes
+  are added/removed — unlike vector reallocation.
+- **Poor locality.** Pointer chasing defeats CPU prefetch; vector wins on scans.
+
+---
+
+## 9. Common Pitfalls
+
+- **No random access.** `l[i]` does not exist — use an iterator or walk manually.
+- **`front()`/`back()` on empty list.** Undefined behavior, like `std::list`.
+- **Iterator invalidation.** Iterators to erased nodes dangle; iterators to other
+  nodes remain valid when this impl only pushes/pops at ends.
+- **Memory overhead.** Two pointers + allocator overhead per element — wasteful
+  for tiny `T` (consider vector or deque).
+- **Don't assume cache performance.** Benchmarks favor vector for most workloads.
+
+---
+
+## 10. Comparison with `std::list`
+
+**Same:** doubly-linked node structure, O(1) end push/pop, bidirectional
+iterators, stable element addresses.
+
+**Intentionally omitted for clarity:** `insert`/`erase`/`splice` at iterator,
+`emplace`, allocators, `remove`/`unique`/`merge`/`sort`, size guaranteed O(1)
+via sentinel tricks.
+
+---
+
+## 11. Build & Run
+
+```bash
+make run-list       # build + run the examples
+make test-list      # build + run the unit tests
+make all            # build everything in the repo
+```
+
+---
+
+## 12. See Also
+
+- [`vector`](../vector/README.md) — contiguous, cache-friendly dynamic array
+- [`deque`](../deque/README.md) — chunked, O(1) both ends + random access
+- [`array`](../array/README.md) — fixed-size stack wrapper

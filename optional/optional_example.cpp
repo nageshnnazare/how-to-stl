@@ -1,4 +1,11 @@
-#include "optional.hpp"
+// optional_example.cpp — runnable tour of Optional<T> (maybe-value container)
+//
+// Demonstrates: disengaged vs engaged states, placement-new lifetime, value_or,
+// exceptions from value(), reset, arrow/dereference, copy/move, and config defaults.
+// Build from repo root:
+//   g++ -std=c++14 -Wall -Wextra -Wpedantic -I. optional/optional_example.cpp -o /tmp/x_optional
+
+#include "optional/optional.hpp"
 #include <iostream>
 #include <string>
 
@@ -6,89 +13,98 @@ void print_divider(const char* title) {
     std::cout << "\n=== " << title << " ===\n";
 }
 
-// Example 1: Basic Optional Usage
+// ---------------------------------------------------------------------------
+// Example 1: Disengaged vs engaged — the two states
+// ---------------------------------------------------------------------------
+// DISENGAGED: has_value_=false, no T in storage_
+// ENGAGED:    has_value_=true,  live T from placement new
 void example_basic() {
-    print_divider("Basic Optional Usage");
-    
-    // Empty optional
+    print_divider("Basic Optional — Two States");
+
     Optional<int> empty;
     std::cout << "Empty optional has_value: " << empty.has_value() << "\n";
-    std::cout << "Empty optional bool: " << (empty ? "true" : "false") << "\n";
-    
-    // Optional with value
+    std::cout << "Empty optional bool:      " << (empty ? "true" : "false") << "\n";
+
     Optional<int> opt(42);
-    std::cout << "opt has_value: " << opt.has_value() << "\n";
-    std::cout << "opt value: " << opt.value() << "\n";
-    std::cout << "opt via *: " << *opt << "\n";
+    std::cout << "Engaged has_value: " << opt.has_value() << "\n";
+    std::cout << "Engaged value():   " << opt.value() << "\n";
+    std::cout << "Engaged via *:     " << *opt << "\n";
+
+    // Engaged with value zero is STILL engaged
+    Optional<int> zero(0);
+    std::cout << "Optional(0) is engaged: " << (zero ? "true" : "false")
+              << ", value=" << *zero << "\n";
 }
 
-// Example 2: value_or for Default Values
+// ---------------------------------------------------------------------------
+// Example 2: value_or — safe fallback without exceptions
+// ---------------------------------------------------------------------------
 void example_value_or() {
-    print_divider("value_or - Default Values");
-    
+    print_divider("value_or — Default Values");
+
     Optional<int> opt1(100);
-    Optional<int> opt2;
-    
+    Optional<int> opt2;  // disengaged
+
     std::cout << "opt1.value_or(999): " << opt1.value_or(999) << "\n";
     std::cout << "opt2.value_or(999): " << opt2.value_or(999) << "\n";
-    
-    // Practical use case - configuration settings
-    Optional<int> port;  // Not configured
-    int server_port = port.value_or(8080);  // Use default 8080
-    std::cout << "Server port: " << server_port << "\n";
+
+    Optional<int> port;  // user did not configure
+    int server_port = port.value_or(8080);
+    std::cout << "Server port (default): " << server_port << "\n";
 }
 
-// Example 3: Exception Handling
+// ---------------------------------------------------------------------------
+// Example 3: value() throws when disengaged
+// ---------------------------------------------------------------------------
 void example_exceptions() {
     print_divider("Exception Handling");
-    
+
     Optional<std::string> opt;
-    
+
     try {
-        std::cout << "Accessing empty optional...\n";
+        std::cout << "Calling value() on empty optional...\n";
         std::string val = opt.value();
         std::cout << "Value: " << val << "\n";
     } catch (const std::runtime_error& e) {
-        std::cout << "Caught exception: " << e.what() << "\n";
+        std::cout << "Caught: " << e.what() << "\n";
     }
-    
-    // Safe check before access
+
     if (opt) {
         std::cout << "Has value: " << *opt << "\n";
     } else {
-        std::cout << "Optional is empty\n";
+        std::cout << "Guarded check: optional is empty — skip dereference\n";
     }
 }
 
-// Example 4: Reset and Reassignment
+// ---------------------------------------------------------------------------
+// Example 4: reset() — explicit ~T() then disengage
+// ---------------------------------------------------------------------------
 void example_reset() {
     print_divider("Reset and Reassignment");
-    
+
     Optional<int> opt(123);
-    std::cout << "Initial value: " << *opt << "\n";
-    
-    // Reset to empty
+    std::cout << "Initial: " << *opt << " (engaged)\n";
+
     opt.reset();
     std::cout << "After reset, has_value: " << opt.has_value() << "\n";
-    
-    // Reassign
+
     opt = Optional<int>(456);
     std::cout << "After reassignment: " << *opt << "\n";
 }
 
-// Example 5: Optional with Complex Types
+// ---------------------------------------------------------------------------
+// Example 5: Complex type — visible ctor/dtor in storage_
+// ---------------------------------------------------------------------------
 struct Person {
     std::string name;
     int age;
-    
+
     Person(const std::string& n, int a) : name(n), age(a) {
         std::cout << "  Person constructed: " << name << "\n";
     }
-    
     ~Person() {
         std::cout << "  Person destructed: " << name << "\n";
     }
-    
     Person(const Person& other) : name(other.name), age(other.age) {
         std::cout << "  Person copied: " << name << "\n";
     }
@@ -96,78 +112,70 @@ struct Person {
 
 void example_complex_types() {
     print_divider("Optional with Complex Types");
-    
+
     {
         Optional<Person> opt(Person("Alice", 30));
         std::cout << "Name: " << opt->name << ", Age: " << opt->age << "\n";
-        
-        // Modify through ->
         opt->age = 31;
-        std::cout << "Updated age: " << opt->age << "\n";
+        std::cout << "Updated age via ->: " << opt->age << "\n";
     }
-    std::cout << "Optional destroyed\n";
+    std::cout << "Block ended — Optional destructor ran ~Person if still engaged\n";
 }
 
-// Example 6: Function Return Values
+// ---------------------------------------------------------------------------
+// Example 6: Function returns — empty means "no result"
+// ---------------------------------------------------------------------------
 Optional<int> divide(int a, int b) {
-    if (b == 0) {
-        return Optional<int>();  // Return empty optional
-    }
+    if (b == 0) return Optional<int>();
     return Optional<int>(a / b);
 }
 
 Optional<std::string> find_user(int id) {
     if (id == 1) return Optional<std::string>("Alice");
     if (id == 2) return Optional<std::string>("Bob");
-    return Optional<std::string>();  // User not found
+    return Optional<std::string>();
 }
 
 void example_return_values() {
     print_divider("Function Return Values");
-    
-    // Safe division
+
     auto result1 = divide(10, 2);
     if (result1) {
         std::cout << "10 / 2 = " << *result1 << "\n";
     }
-    
+
     auto result2 = divide(10, 0);
-    if (result2) {
-        std::cout << "10 / 0 = " << *result2 << "\n";
-    } else {
-        std::cout << "Division by zero - no result\n";
+    if (!result2) {
+        std::cout << "10 / 0 — no result (disengaged optional)\n";
     }
-    
-    // User lookup
-    auto user1 = find_user(1);
-    std::cout << "User 1: " << user1.value_or("Not found") << "\n";
-    
-    auto user3 = find_user(3);
-    std::cout << "User 3: " << user3.value_or("Not found") << "\n";
+
+    std::cout << "User 1: " << find_user(1).value_or("Not found") << "\n";
+    std::cout << "User 3: " << find_user(3).value_or("Not found") << "\n";
 }
 
-// Example 7: Copy and Move Semantics
+// ---------------------------------------------------------------------------
+// Example 7: Copy and move — duplicate or steal engaged value
+// ---------------------------------------------------------------------------
 void example_copy_move() {
     print_divider("Copy and Move Semantics");
-    
+
     Optional<int> opt1(100);
-    
-    // Copy construction
+
     Optional<int> opt2(opt1);
-    std::cout << "opt1: " << *opt1 << ", opt2: " << *opt2 << "\n";
-    
-    // Move construction
+    std::cout << "After copy: opt1=" << *opt1 << ", opt2=" << *opt2 << "\n";
+
     Optional<int> opt3(std::move(opt1));
-    std::cout << "opt3: " << *opt3 << "\n";
-    std::cout << "opt1 after move has_value: " << opt1.has_value() << "\n";
-    
-    // Copy assignment
+    std::cout << "After move: opt3=" << *opt3 << "\n";
+    std::cout << "opt1 after move has_value: " << opt1.has_value() << " (source emptied)\n";
+
     Optional<int> opt4;
     opt4 = opt2;
-    std::cout << "opt4 after copy: " << *opt4 << "\n";
+    std::cout << "Copy assign opt4: " << *opt4 << "\n";
 }
 
-// Example 8: Chaining with value_or
+// ---------------------------------------------------------------------------
+// Example 8: Configuration pattern — unset fields pick defaults
+// ---------------------------------------------------------------------------
 struct Config {
     Optional<int> port;
     Optional<std::string> host;
@@ -176,41 +184,29 @@ struct Config {
 
 void example_config_pattern() {
     print_divider("Configuration Pattern");
-    
-    Config config;
-    // User didn't configure these values
-    
-    // Use defaults
-    int port = config.port.value_or(8080);
-    std::string host = config.host.value_or("localhost");
-    int timeout = config.timeout.value_or(30);
-    
-    std::cout << "Server config:\n";
-    std::cout << "  Host: " << host << "\n";
-    std::cout << "  Port: " << port << "\n";
-    std::cout << "  Timeout: " << timeout << "s\n";
-    
-    // User provides some config
-    Config config2;
-    config2.port = Optional<int>(9000);
-    config2.host = Optional<std::string>("api.example.com");
-    
-    port = config2.port.value_or(8080);
-    host = config2.host.value_or("localhost");
-    timeout = config2.timeout.value_or(30);
-    
-    std::cout << "\nUser-configured server:\n";
-    std::cout << "  Host: " << host << "\n";
-    std::cout << "  Port: " << port << "\n";
-    std::cout << "  Timeout: " << timeout << "s\n";
+
+    Config defaults_only;
+    std::cout << "Defaults:\n";
+    std::cout << "  host: " << defaults_only.host.value_or("localhost") << "\n";
+    std::cout << "  port: " << defaults_only.port.value_or(8080) << "\n";
+    std::cout << "  timeout: " << defaults_only.timeout.value_or(30) << "s\n";
+
+    Config partial;
+    partial.port = Optional<int>(9000);
+    partial.host = Optional<std::string>("api.example.com");
+
+    std::cout << "\nPartial override:\n";
+    std::cout << "  host: " << partial.host.value_or("localhost") << "\n";
+    std::cout << "  port: " << partial.port.value_or(8080) << "\n";
+    std::cout << "  timeout: " << partial.timeout.value_or(30) << "s\n";
 }
 
 int main() {
     std::cout << "╔════════════════════════════════════════════════╗\n";
     std::cout << "║         Optional Container Examples            ║\n";
-    std::cout << "║        Maybe-value Type (std::optional)        ║\n";
+    std::cout << "║   Engaged (live T) vs disengaged (empty)       ║\n";
     std::cout << "╚════════════════════════════════════════════════╝\n";
-    
+
     example_basic();
     example_value_or();
     example_exceptions();
@@ -219,8 +215,73 @@ int main() {
     example_return_values();
     example_copy_move();
     example_config_pattern();
-    
+
     std::cout << "\n✅ All Optional examples completed successfully!\n";
     return 0;
 }
 
+/* ===== EXPECTED OUTPUT (sample run) ============================================
+ * Auto-generated by running this program (see tests/README.md).
+ * ----------------------------------------------------------------------------
+╔════════════════════════════════════════════════╗
+║         Optional Container Examples            ║
+║   Engaged (live T) vs disengaged (empty)       ║
+╚════════════════════════════════════════════════╝
+
+=== Basic Optional — Two States ===
+Empty optional has_value: 0
+Empty optional bool:      false
+Engaged has_value: 1
+Engaged value():   42
+Engaged via *:     42
+Optional(0) is engaged: true, value=0
+
+=== value_or — Default Values ===
+opt1.value_or(999): 100
+opt2.value_or(999): 999
+Server port (default): 8080
+
+=== Exception Handling ===
+Calling value() on empty optional...
+Caught: Optional::value: no value
+Guarded check: optional is empty — skip dereference
+
+=== Reset and Reassignment ===
+Initial: 123 (engaged)
+After reset, has_value: 0
+After reassignment: 456
+
+=== Optional with Complex Types ===
+  Person constructed: Alice
+  Person copied: Alice
+  Person destructed: Alice
+Name: Alice, Age: 30
+Updated age via ->: 31
+  Person destructed: Alice
+Block ended — Optional destructor ran ~Person if still engaged
+
+=== Function Return Values ===
+10 / 2 = 5
+10 / 0 — no result (disengaged optional)
+User 1: Alice
+User 3: Not found
+
+=== Copy and Move Semantics ===
+After copy: opt1=100, opt2=100
+After move: opt3=100
+opt1 after move has_value: 0 (source emptied)
+Copy assign opt4: 100
+
+=== Configuration Pattern ===
+Defaults:
+  host: localhost
+  port: 8080
+  timeout: 30s
+
+Partial override:
+  host: api.example.com
+  port: 9000
+  timeout: 30s
+
+✅ All Optional examples completed successfully!
+ * ============================================================================ */

@@ -1,408 +1,285 @@
-# String Class Implementation
+# String — Dynamic Character Sequence with SSO
 
-Complete, production-quality implementation of a dynamic string class similar to `std::string`.
+> A `String` is a growable, null-terminated sequence of characters — like
+> `std::string`, but built from scratch so you can see every allocation decision.
+> Short strings (≤ 15 characters) live in an inline buffer inside the object
+> itself (Small String Optimization); longer strings spill to the heap. You call
+> `append` or `+=`; the class tracks size, capacity, and the trailing `'\0'`.
 
-## Overview
+This is a from-scratch reimplementation of `std::string` built for learning. The
+header is [`string.hpp`](string.hpp), runnable examples are in
+[`string_example.cpp`](string_example.cpp), and the test suite is in
+[`../tests/string_test.cpp`](../tests/string_test.cpp).
 
-The String class provides:
-- **Dynamic memory allocation** with RAII
-- **Small String Optimization (SSO)** for performance
-- **Copy and move semantics**
-- **Rich set of string operations**
-- **Iterator support**
-- **Exception safety**
-- **STL-compatible interface**
+---
 
-## Features
+## 1. What It Is
 
-### Core Functionality
-✅ Dynamic memory management  
-✅ Small String Optimization (≤ 15 chars)  
-✅ Automatic null termination  
-✅ Copy-on-write semantics  
-✅ Move optimization  
-✅ Exception safety  
+| Property | Value |
+|---|---|
+| Storage | Inline SSO buffer (≤ 15 chars) or heap `char[]` |
+| Order | Character sequence left-to-right |
+| Random access | **Yes**, O(1) by index |
+| Grows | Automatically via `reserve` / `append` |
+| Object size | ~40 bytes on 64-bit (`data_`, `size_`, `capacity_`, `sso_buffer_[16]`) |
 
-### Constructors
-- Default constructor (empty string)
-- From C-string
-- Repeated character (n copies of char)
-- Substring constructor
-- Copy constructor
-- Move constructor
+**Reach for a String when** you need a mutable text buffer with rich operations
+(append, insert, find, compare) and C-string compatibility via `c_str()`.
 
-### Element Access
-- `operator[]` - subscript (no bounds check)
-- `at()` - subscript with bounds checking
-- `front()` / `back()` - first/last character
-- `c_str()` / `data()` - get C-string
+**Look elsewhere when** you only need a non-owning view (C++17 `string_view`) or
+a fixed-size buffer on the stack (see [`array`](../array/README.md)).
 
-### Iterators
-- `begin()` / `end()` - forward iterators
-- `cbegin()` / `cend()` - const iterators
-- Range-based for loop support
+---
+
+## 2. Mental Model
+
+A String is a pointer plus two counters, with a hidden inline buffer for the
+common short-string case:
+
+```
+   SSO mode (size_ = 5)                    Heap mode (size_ = 30)
+   ┌────────────────────────┐             ┌────────────────────────┐
+   │ data_  ●──┐            │             │ data_  ●───────────────┼──▶ heap
+   │ size_  = 5             │             │ size_  = 30            │    "Long...\0"
+   │ capacity_ = 15         │             │ capacity_ = 30         │
+   │ sso_buffer_            │             │ sso_buffer_ (unused)   │
+   │   [H][e][l][l][o][\0]◀─┘             └────────────────────────┘
+   └────────────────────────┘
+```
+
+- `data_` always points at the active buffer — either `sso_buffer_` or heap.
+- `size_` is the character count; `data_[size_] == '\0'` is always maintained.
+- `is_sso()` is simply `data_ == sso_buffer_` — no separate mode flag.
+
+---
+
+## 3. Internal Representation
+
+```cpp
+static constexpr size_type SSO_CAPACITY = 15;
+
+char*       data_;                    // active buffer (SSO or heap)
+size_type   size_;                    // char count (excludes '\0')
+size_type   capacity_;                // max chars before regrow
+char        sso_buffer_[SSO_CAPACITY + 1];  // inline storage + '\0' slot
+```
+
+**Invariants:** `0 <= size_ <= capacity_`; `data_[size_] == '\0'`; when in SSO
+mode, `data_ == sso_buffer_` and `capacity_ == SSO_CAPACITY`.
+
+### SSO vs heap — the two storage modes
+
+| Mode | Condition | `data_` points to | Heap allocated? |
+|---|---|---|---|
+| SSO | `size_ <= 15` (and never promoted) | `sso_buffer_` inside object | No |
+| Heap | `size_ > 15` or after `reserve(n)` with `n > 15` | `new char[capacity_+1]` | Yes |
+
+---
+
+## 4. How It Works (Step by Step)
+
+### 4.1 Construction from a C-string
+
+```
+   String("Hello"):
+       len = 5 <= 15  →  stay in SSO
+       data_ = sso_buffer_;  strcpy into inline buffer
+
+   String("...30 chars..."):
+       len = 30 > 15  →  data_ = new char[31];  strcpy to heap
+```
+
+### 4.2 SSO → heap transition (`reserve` / `append`)
+
+When `size_ + growth` would exceed `SSO_CAPACITY`, `ensure_capacity` calls
+`reserve`, which allocates heap memory and copies existing characters:
+
+```
+   before:  data_ ─▶ sso_buffer_  "Hello\0"        (cap 15, SSO)
+
+   append 20 more chars (total 25 > 15):
+       new_data ─▶ [Hello + 20 new chars\0]         (heap, cap ≥ 25)
+       delete[] old heap only if was heap; SSO buffer never deleted
+       data_ = new_data;  capacity_ updated
+```
+
+### 4.3 Append (`append` / `push_back` / `operator+=`)
+
+```
+   append " World" to "Hello":
+       ensure_capacity(5 + 6)   — no-op if SSO has room
+       memcpy(data_ + 5, " World", 6)
+       size_ = 11;  data_[11] = '\0'
+```
+
+Amortized O(1) when geometric growth is used; this implementation grows to the
+exact requested capacity in `reserve` (simpler, but may realloc more often than
+libstdc++'s geometric policy).
+
+### 4.4 Insert — memmove opens a gap
+
+```
+   insert "XX" at index 1 of "ABCDE":
+              [A][B][C][D][E][\0]
+               └── memmove tail right by 2 ──▶
+              [A][ ][ ][B][C][D][E][\0]
+                  └── memcpy "XX" ──▶
+              [A][X][X][B][C][D][E][\0]
+```
+
+`memmove` (not `memcpy`) because source and destination overlap.
+
+### 4.5 Move semantics — two paths
+
+```
+   Move from SSO source:  strcpy inline (can't steal buffer inside other)
+   Move from heap source: steal data_ pointer O(1); reset other to empty SSO
+```
+
+### 4.6 `swap` — four SSO/heap combinations
+
+Both SSO → strcpy exchange; both heap → swap pointers; mixed → copy SSO side
+to temp, steal heap pointer, strcpy temp into the SSO object.
+
+### 4.7 `shrink_to_fit` — heap → SSO when possible
+
+If `size_ <= 15` on a heap string, copy into `sso_buffer_`, `delete[]` heap,
+repoint `data_` at `sso_buffer_`.
+
+---
+
+## 5. API Reference
+
+### Construction
+| Call | Effect |
+|---|---|
+| `String()` | empty SSO string |
+| `String(const char*)` | copy C-string |
+| `String(n, c)` | `n` copies of character `c` |
+| `String(other, pos, len)` | substring |
+| copy / move ctor | deep copy / steal-or-copy |
+
+### Element access
+| Call | Bounds-checked? | Notes |
+|---|---|---|
+| `operator[](i)` | ❌ | fastest; UB if out of range |
+| `at(i)` | ✅ | throws `std::out_of_range` |
+| `front()` / `back()` | ❌ | first / last character |
+| `c_str()` / `data()` | — | null-terminated `const char*` |
 
 ### Capacity
-- `empty()` - check if empty
-- `size()` / `length()` - get size
-- `capacity()` - get allocated capacity
-- `reserve()` - pre-allocate memory
-- `shrink_to_fit()` - reduce capacity to size
+`empty()`, `size()`, `length()`, `capacity()`, `reserve(n)`, `shrink_to_fit()`
 
 ### Modifiers
-- `clear()` - empty the string
-- `append()` / `operator+=` - concatenate
-- `push_back()` / `pop_back()` - single character
-- `insert()` - insert at position
-- `erase()` - remove characters
-- `replace()` - replace substring
-- `resize()` - change size
-- `swap()` - exchange with another string
+`clear()`, `append()`, `operator+=`, `push_back`, `pop_back`, `insert`, `erase`,
+`replace`, `resize`, `swap`
 
-### String Operations
-- `find()` / `rfind()` - search for substring/character
-- `substr()` - extract substring
-- `compare()` - lexicographical comparison
+### String operations
+`find`, `rfind`, `substr`, `compare`
 
-### Operators
-- Assignment: `=` (copy, move, C-string, char)
-- Concatenation: `+`
-- Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`
-- Stream I/O: `<<`, `>>`
+### Non-member
+`+` concatenation, `==`, `!=`, `<`, `<=`, `>`, `>=`, `<<`, `>>`, `swap`
 
-## Implementation Details
+---
 
-### Small String Optimization (SSO)
+## 6. Complexity Summary
 
-**Concept**: Short strings (≤ 15 characters) are stored in a stack buffer, avoiding heap allocation.
+| Operation | Complexity | Note |
+|---|---|---|
+| `operator[]`, `at`, `front`, `back` | O(1) | |
+| Construction from C-string | O(n) | `n` = length |
+| Copy | O(n) | deep copy all chars |
+| Move (heap) | O(1) | pointer steal |
+| Move (SSO) | O(n) | small `n` ≤ 15 |
+| `append` / `push_back` | O(n) worst | may realloc + copy |
+| `insert` / `erase` / `replace` | O(n) | tail shift |
+| `find` (substring) | O(n·m) | naive `strstr`-based |
+| `swap` (both heap) | O(1) | pointer swap |
+| `clear` | O(1) | just reset size + `'\0'` |
 
-```cpp
-class String {
-private:
-    static constexpr size_type SSO_CAPACITY = 15;
-    
-    char* data_;                    // Pointer to data
-    size_type size_;               // Current size
-    size_type capacity_;           // Allocated capacity
-    char sso_buffer_[SSO_CAPACITY + 1];  // Stack buffer for SSO
-    
-    bool is_sso() const {
-        return data_ == sso_buffer_;
-    }
-};
-```
+---
 
-**Benefits**:
-- **No heap allocation** for short strings
-- **Better cache locality**
-- **Faster construction/destruction**
-- **Common case optimization** (most strings are short)
+## 7. Usage
 
-**Example**:
-```cpp
-String s1 = "Hello";           // Uses SSO (stack)
-String s2 = "Very long string...";  // Uses heap
-
-std::cout << s1.capacity();    // 15 (SSO)
-std::cout << s2.capacity();    // > 15 (heap)
-```
-
-### Memory Layout
-
-```
-SSO String (≤ 15 chars):
-┌─────────────────────────┐
-│  data_  ───┐            │
-│  size_ = 5 │            │
-│  capacity_ = 15         │
-│  sso_buffer_[16]        │
-│  ↓ points here          │
-│  "Hello\0..."           │
-└─────────────────────────┘
-Stack only, no heap allocation
-
-Heap String (> 15 chars):
-┌─────────────────────────┐        Heap:
-│  data_  ────────────────┼───────→ "Long string...\0"
-│  size_ = 30             │
-│  capacity_ = 30         │
-│  sso_buffer_[16]        │
-│  (unused)               │
-└─────────────────────────┘
-```
-
-### Move Semantics
-
-**SSO Strings**: Copied (cheap for short strings)
-```cpp
-String s1 = "Short";
-String s2 = std::move(s1);  // Copies SSO buffer
-// Both valid, s1 still usable
-```
-
-**Heap Strings**: Pointer stolen (O(1))
-```cpp
-String s1 = "Long string...";
-String s2 = std::move(s1);  // Steals heap pointer
-// s1 is now empty
-```
-
-### Capacity Management
-
-**Geometric Growth**: When appending requires more capacity:
-```cpp
-new_capacity = old_capacity * 2;
-```
-
-**Benefits**:
-- Amortized O(1) append operations
-- Reduces number of reallocations
-- Similar to std::string and std::vector
-
-### Exception Safety
-
-**Strong guarantee** for most operations:
-- If operation throws, string remains unchanged
-- RAII ensures memory is always freed
-- No memory leaks even with exceptions
-
-```cpp
-try {
-    String s = "Test";
-    s.at(100);  // Throws std::out_of_range
-} catch (...) {
-    // s is properly cleaned up
-}
-```
-
-## Usage Examples
-
-### Basic Usage
 ```cpp
 #include "string/string.hpp"
 
-String s1;                    // Empty string
-String s2("Hello");          // From C-string
-String s3(5, '*');           // "*****"
-String s4 = s2;              // Copy
-String s5 = std::move(s2);   // Move
-```
-
-### Element Access
-```cpp
 String s = "Hello";
+s += ", World!";           // append (may stay SSO or go heap)
+s.push_back('?');
 
-// Subscript (no bounds check)
-char c1 = s[0];              // 'H'
-s[0] = 'h';                  // "hello"
+char c = s[0];             // fast, unchecked
+char safe = s.at(1);       // checked
 
-// Bounds checking
-try {
-    char c2 = s.at(10);      // Throws
-} catch (std::out_of_range& e) {
-    std::cout << "Out of range!\n";
-}
+s.insert(5, ",");          // "Hello, World!?"
+s.replace(0, 5, "Hi");     // "Hi, World!?"
 
-// First/last
-char first = s.front();      // 'h'
-char last = s.back();        // 'o'
+auto pos = s.find("World");
+String sub = s.substr(0, 2);
+
+for (char ch : s) std::cout << ch;
 ```
 
-### Modifications
-```cpp
-String s = "Hello";
+See [`string_example.cpp`](string_example.cpp) for SSO transitions, move
+semantics, search/replace, and more.
 
-s += " World";               // "Hello World"
-s.append("!");              // "Hello World!"
-s.push_back('?');           // "Hello World!?"
-s.insert(5, ",");           // "Hello, World!?"
-s.erase(5, 1);              // "Hello World!?"
-s.replace(6, 5, "C++");     // "Hello C++!?"
-```
+---
 
-### Searching
-```cpp
-String s = "The quick brown fox";
+## 8. Design Decisions & Trade-offs
 
-auto pos = s.find("quick");  // 4
-pos = s.find('q');           // 4
-pos = s.find("slow");        // String::npos
+- **SSO threshold of 15.** Matches a common libstdc++ choice on 64-bit; trades
+  ~16 extra bytes per object for zero heap traffic on short strings.
+- **Pointer-as-mode-flag.** `data_ == sso_buffer_` means SSO — no extra bool.
+- **Exact growth in `reserve`.** Simpler than geometric doubling; easier to
+  reason about, but more reallocations on repeated small appends.
+- **`strcpy`/`memcpy`/`memmove`.** Pedagogically clear C-style memory ops; a
+  production string might use `char_traits` and allocators.
+- **Move from SSO copies.** The inline buffer cannot be stolen (it lives inside
+  the source object), so SSO move is a small memcpy, not a pointer steal.
 
-pos = s.rfind('o');          // Last 'o'
+---
 
-String sub = s.substr(4, 5); // "quick"
-```
+## 9. Common Pitfalls
 
-### Concatenation
-```cpp
-String s1 = "Hello";
-String s2 = "World";
+- **Assuming move empties SSO sources meaningfully.** After moving from an SSO
+  string, the source is still valid with the same characters (copied, not stolen).
+- **`data()` returns `const char*` in our API** — use non-const `operator[]` to
+  mutate individual characters.
+- **Invalidating nothing on `append` to SSO** — but `reserve` that leaves SSO
+  allocates new heap memory; any raw pointer into `sso_buffer_` would dangle
+  (don't hold raw pointers into string internals).
+- **`operator[]` has no bounds check.** Use `at()` on untrusted indices.
+- **Forgetting the null terminator.** `size_` excludes `'\0'`; always use
+  `c_str()` for C APIs, not `&s[0]` on an empty string before C++11 guarantees.
 
-String s3 = s1 + " " + s2;   // "Hello World"
-String s4 = s1 + '!';         // "Hello!"
-String s5 = '[' + s1 + ']';   // "[Hello]"
-```
+---
 
-### Comparison
-```cpp
-String s1 = "apple";
-String s2 = "banana";
+## 10. Comparison with `std::string`
 
-if (s1 < s2) {               // true
-    std::cout << "apple comes before banana\n";
-}
+**Same:** SSO idea, dynamic growth, null termination, rich modifier/search API,
+move/copy semantics, iterator as `char*`.
 
-if (s1 == "apple") {         // true
-    std::cout << "Match!\n";
-}
-```
+**Intentionally omitted for clarity:** custom allocators, `string_view` interop,
+locale-aware operations, `std::pmr::string`, COW (deprecated in libstdc++ anyway).
 
-### Iterators
-```cpp
-String s = "Hello";
+**Differs:** our SSO move copies; growth policy is exact-size `reserve`; object
+is slightly larger (explicit 16-byte SSO buffer always present).
 
-// Range-based for
-for (char c : s) {
-    std::cout << c;
-}
+---
 
-// Iterators
-for (auto it = s.begin(); it != s.end(); ++it) {
-    *it = std::toupper(*it);
-}
-// s is now "HELLO"
-```
+## 11. Build & Run
 
-### With STL Containers
-```cpp
-std::vector<String> words;
-words.push_back("Hello");
-words.push_back("World");
-
-for (const auto& word : words) {
-    std::cout << word << " ";
-}
-```
-
-## Performance Characteristics
-
-| Operation | Time Complexity | Notes |
-|-----------|----------------|-------|
-| Construction (empty) | O(1) | SSO buffer initialization |
-| Construction (C-string) | O(n) | Copy n characters |
-| Copy | O(n) | Deep copy |
-| Move (SSO) | O(1) | Copy small buffer |
-| Move (heap) | O(1) | Steal pointer |
-| Subscript `[]` | O(1) | Direct access |
-| `at()` | O(1) | With bounds check |
-| `append()` | Amortized O(1) | Geometric growth |
-| `insert()` | O(n) | Shift characters |
-| `erase()` | O(n) | Shift characters |
-| `find()` | O(n*m) | Naive search |
-| `substr()` | O(m) | Copy m characters |
-| `compare()` | O(min(n,m)) | Lexicographical |
-
-## Memory Overhead
-
-```
-sizeof(String) = 
-    sizeof(char*)     +  // 8 bytes (64-bit)
-    sizeof(size_t)    +  // 8 bytes (size)
-    sizeof(size_t)    +  // 8 bytes (capacity)
-    16                   // 16 bytes (SSO buffer)
-= 40 bytes per String object
-```
-
-**Comparison**:
-- `std::string`: typically 24-32 bytes (platform-dependent)
-- Our String: 40 bytes (larger SSO buffer)
-
-**Trade-off**: Larger object size for better SSO performance.
-
-## Comparison with std::string
-
-| Feature | Our String | std::string |
-|---------|-----------|-------------|
-| SSO | ✅ (15 chars) | ✅ (15-23 chars) |
-| Dynamic allocation | ✅ | ✅ |
-| Copy semantics | ✅ | ✅ |
-| Move semantics | ✅ | ✅ |
-| Iterators | ✅ | ✅ |
-| Exception safety | ✅ | ✅ |
-| COW (Copy-On-Write) | ❌ | ⚠️ (deprecated) |
-| `std::string_view` support | ❌ | ✅ (C++17) |
-| Allocator support | ❌ | ✅ |
-| Locale support | ❌ | ✅ |
-
-## Building and Testing
-
-### Compile Examples
 ```bash
-make run-string
+make run-string     # build + run the examples
+make test-string    # build + run the unit tests
+make all            # build everything in the repo
 ```
 
-### Run Tests
-```bash
-make test-string
-```
+---
 
-### Test Coverage
-- 100+ test cases
-- Construction/destruction
-- Copy/move semantics
-- Element access
-- Capacity management
-- Modifications
-- String operations
-- Comparisons
-- Iterators
-- SSO behavior
-- Edge cases
+## 12. See Also
 
-## Common Patterns
-
-### Builder Pattern
-```cpp
-String build_message() {
-    String msg;
-    msg.reserve(100);  // Pre-allocate
-    msg += "Error: ";
-    msg += get_error_code();
-    msg += " - ";
-    msg += get_error_message();
-    return msg;  // Move optimization
-}
-```
-
-### Token Parsing
-```cpp
-String input = "one,two,three";
-size_t pos = 0;
-while ((pos = input.find(',')) != String::npos) {
-    String token = input.substr(0, pos);
-    process(token);
-    input.erase(0, pos + 1);
-}
-```
-
-### Case Conversion
-```cpp
-String to_upper(const String& s) {
-    String result = s;
-    for (char& c : result) {
-        c = std::toupper(c);
-    }
-    return result;
-}
-```
-
-## See Also
-
-- [Examples](string_example.cpp) - 15 comprehensive examples
-- [Tests](../tests/string_test.cpp) - 100+ unit tests
-- [Main README](../README.md) - Project overview
-
-## License
-
-Educational implementation for learning purposes.
-
+- [`vector`](../vector/README.md) — contiguous dynamic array (similar growth ideas)
+- [`array`](../array/README.md) — fixed-size stack buffer when length is known at compile time
+- [`deque`](../deque/README.md) — double-ended queue
+- [`list`](../list/README.md) — linked structure, poor cache locality vs contiguous strings

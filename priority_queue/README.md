@@ -1,346 +1,223 @@
-# PriorityQueue Implementation
-
-Binary heap-based priority queue providing efficient access to the highest (or lowest) priority element.
-
-## Features
-- **Binary Heap**: Efficient O(log n) operations
-- **Max Heap by Default**: Largest element at top
-- **Customizable**: Use any comparator (min heap, custom priority)
-- **O(1) Access**: Constant time access to top element
-- **O(log n) Insert/Remove**: Logarithmic time modifications
-- **Container Adapter**: Built on top of vector by default
-
-## Quick Example
-
-```cpp
-// Max heap (default)
-PriorityQueue<int> pq;
-pq.push(30);
-pq.push(10);
-pq.push(50);
-
-std::cout << pq.top();  // 50 (largest)
-pq.pop();
-std::cout << pq.top();  // 30
-
-// Min heap
-PriorityQueue<int, std::vector<int>, std::greater<int>> min_pq;
-min_pq.push(30);
-min_pq.push(10);
-min_pq.push(50);
-
-std::cout << min_pq.top();  // 10 (smallest)
-```
-
-## Operations
-
-- `push(value)` - Insert element (O(log n))
-- `pop()` - Remove top element (O(log n))
-- `top()` - Access top element (O(1))
-- `emplace(args...)` - Construct element in-place (O(log n))
-- `size()`, `empty()` - Capacity queries (O(1))
-- `swap(other)` - Swap contents (O(1))
-
-## Algorithm Details
-
-### Binary Heap Structure
-- Complete binary tree stored in a vector
-- Parent at index `i`, children at `2i+1` and `2i+2`
-- Heap property: Parent ≥ children (max heap)
-
-### Operations
-
-**Insert (Heapify Up):**
-1. Add element at end
-2. Bubble up while violating heap property
-3. Time: O(log n)
-
-**Remove (Heapify Down):**
-1. Replace root with last element
-2. Bubble down while violating heap property
-3. Time: O(log n)
-
-**Build Heap (Floyd's Algorithm):**
-1. Start from last non-leaf node
-2. Heapify down all nodes
-3. Time: O(n) - optimal!
-
-## Use Cases
-
-### 1. Task Scheduling
-```cpp
-struct Task {
-    std::string name;
-    int priority;
-};
-
-auto cmp = [](const Task& a, const Task& b) {
-    return a.priority < b.priority;
-};
-
-PriorityQueue<Task, std::vector<Task>, decltype(cmp)> tasks(cmp);
-tasks.push({"urgent", 10});
-tasks.push({"normal", 5});
-
-// Process highest priority first
-while (!tasks.empty()) {
-    process(tasks.top());
-    tasks.pop();
-}
-```
-
-### 2. Finding Median (Two Heaps)
-```cpp
-PriorityQueue<int> lower_half;  // max heap
-PriorityQueue<int, std::vector<int>, std::greater<int>> upper_half;  // min heap
-
-// Median is either top of lower_half or average of both tops
-```
-
-### 3. Top K Elements
-```cpp
-// Keep min heap of size k
-PriorityQueue<int, std::vector<int>, std::greater<int>> pq;
-for (int num : large_array) {
-    pq.push(num);
-    if (pq.size() > k) pq.pop();
-}
-// pq now contains k largest elements
-```
-
-### 4. Merge K Sorted Lists
-```cpp
-struct Element {
-    int value;
-    int list_id;
-};
-
-auto cmp = [](const Element& a, const Element& b) {
-    return a.value > b.value;  // min heap
-};
-
-PriorityQueue<Element, std::vector<Element>, decltype(cmp)> pq(cmp);
-// Add first element from each list, then keep popping and adding
-```
-
-### 5. Dijkstra's Algorithm
-```cpp
-struct Node {
-    int id;
-    int distance;
-};
-
-auto cmp = [](const Node& a, const Node& b) {
-    return a.distance > b.distance;
-};
-
-PriorityQueue<Node, std::vector<Node>, decltype(cmp)> pq(cmp);
-// Process nodes in order of shortest distance
-```
-
-### 6. Heap Sort
-```cpp
-PriorityQueue<int> pq;
-for (int x : unsorted) pq.push(x);
-
-std::vector<int> sorted;
-while (!pq.empty()) {
-    sorted.push_back(pq.top());
-    pq.pop();
-}
-// sorted contains elements in descending order
-```
-
-## Performance
-
-| Operation | Time Complexity | Space |
-|-----------|----------------|-------|
-| push | O(log n) | O(1) |
-| pop | O(log n) | O(1) |
-| top | O(1) | O(1) |
-| emplace | O(log n) | O(1) |
-| size/empty | O(1) | O(1) |
-| build from range | O(n) | O(n) |
-
-## Implementation Highlights
-
-### Heap Property Maintenance
-- **Heapify Up**: After insertion, bubble element up to correct position
-- **Heapify Down**: After removal, bubble element down to correct position
-- **Complete Binary Tree**: Always maintains complete tree structure
-
-### Floyd's Build Heap Algorithm
-- Constructs heap from unsorted data in O(n) time
-- More efficient than inserting elements one-by-one
-- Used in range constructor
-
-### Container Adapter Pattern
-- Uses underlying container (default: vector) for storage
-- Can use any random-access container
-- Provides heap semantics on top
-
-## Comparator Examples
-
-```cpp
-// Min heap
-PriorityQueue<int, std::vector<int>, std::greater<int>> min_pq;
-
-// Custom comparator
-auto cmp = [](const Point& a, const Point& b) {
-    return a.distance() < b.distance();
-};
-PriorityQueue<Point, std::vector<Point>, decltype(cmp)> pq(cmp);
-
-// Function object
-struct CompareDistance {
-    bool operator()(const Node& a, const Node& b) const {
-        return a.dist > b.dist;  // min heap by distance
-    }
-};
-PriorityQueue<Node, std::vector<Node>, CompareDistance> pq;
-```
-
-## Advanced Usage
-
-### Emplace for In-Place Construction
-```cpp
-struct Task {
-    std::string name;
-    int priority;
-    Task(std::string n, int p) : name(n), priority(p) {}
-};
-
-PriorityQueue<Task> pq;
-pq.emplace("task1", 5);  // Constructs Task directly in queue
-```
-
-### Building from Existing Container
-```cpp
-std::vector<int> data = {5, 2, 8, 1, 9};
-PriorityQueue<int> pq(std::less<int>(), data);  // O(n) build
-```
-
-### Copy and Move Semantics
-```cpp
-PriorityQueue<int> pq1;
-pq1.push(10);
-
-PriorityQueue<int> pq2 = pq1;          // Copy
-PriorityQueue<int> pq3 = std::move(pq1);  // Move
-```
-
-## Complexity Analysis
-
-**Why O(log n) for insert/remove?**
-- Binary heap has height log₂(n)
-- Heapify operations traverse at most one path
-- Each level takes O(1) comparisons
-
-**Why O(n) for build heap?**
-- Floyd's algorithm processes each level optimally
-- Most nodes are near bottom (don't move far)
-- Mathematical analysis: Σ (n/2^(h+1)) * h = O(n)
-
-## Common Patterns
-
-### Priority-Based Processing
-```cpp
-while (!pq.empty()) {
-    auto item = pq.top();
-    pq.pop();
-    process(item);
-}
-```
-
-### Maintaining K Best Elements
-```cpp
-if (pq.size() < k) {
-    pq.push(element);
-} else if (element > pq.top()) {  // for max-k with min-heap
-    pq.pop();
-    pq.push(element);
-}
-```
-
-### Streaming Data
-```cpp
-for (const auto& item : stream) {
-    pq.push(item);
-    if (condition) {
-        process(pq.top());
-        pq.pop();
-    }
-}
-```
-
-## Testing
-
-Run comprehensive test suite:
-```bash
-make test-priority-queue
-# or
-./build/priority_queue_test
-```
-
-All 20 tests cover:
-- Basic operations
-- Heap property verification
-- Custom comparators
-- Edge cases
-- Move/copy semantics
-- Exception handling
-
-## Examples
-
-See `priority_queue_example.cpp` for 10 comprehensive examples:
-1. Basic max heap operations
-2. Min heap with custom comparator
-3. Range constructor
-4. Custom types (task scheduling)
-5. Emplace for in-place construction
-6. Finding median with two heaps
-7. Top K elements algorithm
-8. Heap sort
-9. Merging K sorted lists
-10. Copy and move semantics
-
-Run examples:
-```bash
-./build/priority_queue_example
-```
-
-## STL Compatibility
-
-This implementation follows `std::priority_queue` interface:
-- Same function names and semantics
-- Compatible with STL containers and algorithms
-- Drop-in replacement for most use cases
-
-## When to Use
-
-**Use PriorityQueue when:**
-- Need efficient access to max/min element
-- Processing elements by priority
-- Implementing Dijkstra, Prim, or A* algorithms
-- Finding top K elements
-- Merging sorted sequences
-- Managing event queues
-
-**Don't use when:**
-- Need to access arbitrary elements (use Set/Map)
-- Need to iterate in order (use Set)
-- Only need FIFO (use Deque)
-
-## Related Containers
-
-- **Set**: Ordered elements, allows iteration
-- **Deque**: Both ends, but no priority
-- **Vector**: Random access, but no heap structure
+# PriorityQueue — Binary Heap Adapter
+
+> A `PriorityQueue<T>` always exposes the **best** element according to a comparator
+> (default: **largest** on top). Internally it is a **complete binary tree** stored
+> in a **flat array** (`std::vector<T>`): `push` **sifts up**, `pop` **sifts down**,
+> and bulk construction uses **Floyd's heapify** in O(n).
+
+This is a from-scratch reimplementation of `std::priority_queue` built for learning. The
+header is [`priority_queue.hpp`](priority_queue.hpp), runnable examples are in
+[`priority_queue_example.cpp`](priority_queue_example.cpp), and the test suite is in
+[`../tests/priority_queue_test.cpp`](../tests/priority_queue_test.cpp).
 
 ---
 
-**Lines of Code**: 250+ (implementation) + 300+ (examples) + 180+ (tests)  
-**Test Coverage**: 20/20 tests passing ✅  
-**Algorithm**: Binary heap (Floyd's build-heap)  
-**Complexity**: O(log n) push/pop, O(1) top, O(n) build
+## 1. What It Is
 
+| Property | Value |
+|---|---|
+| Kind | **Container adapter** over a random-access sequence |
+| Default storage | `std::vector<T>` (level-order heap) |
+| Default order | **Max-heap** (`std::less` — top is largest) |
+| `top()` | O(1) — root at index 0 |
+| `push` / `pop` | O(log n) — sift up / down |
+
+**Reach for a PriorityQueue when** you repeatedly need the extremal element (Dijkstra,
+scheduling, top-K, event simulation, heap sort).
+
+**Look elsewhere when** you need FIFO fairness ([`queue`](../queue/README.md)) or
+sorted traversal of all keys ([`set`](../set/README.md)).
+
+---
+
+## 2. Mental Model
+
+Same heap as two views — tree and array:
+
+```
+   Tree (max-heap)                 c_ (level-order indices)
+          50                         [0]=50  [1]=30  [2]=40
+         /  \                        [3]=10  [4]=20  [5]=35  [6]=25
+       30    40
+      / \   / \
+    10  20 35 25
+
+   Index relations (0-based):
+     parent(i) = (i - 1) / 2
+     left(i)   = 2 * i + 1
+     right(i)  = 2 * i + 2
+```
+
+`top()` is always `c_[0]`. The tree is **complete** — no gaps in the array.
+
+---
+
+## 3. Internal Representation
+
+```cpp
+Container c_;    // default std::vector<T>, heap layout
+Compare comp_;   // default std::less<T> → max-heap at top()
+```
+
+**Heap property (max-heap):** for every node `i`, `c_[i]` is not less than either child
+per `comp_` (equivalently: `comp_(c_[i], child)` is false when child exists).
+
+**Min-heap:** `PriorityQueue<int, std::vector<int>, std::greater<int>>`.
+
+---
+
+## 4. How It Works (Step by Step)
+
+### 4.1 Push — append leaf, sift-up
+
+```
+   push(45) into existing max-heap:
+
+   (1) push_back(45) at index 7 (new rightmost leaf)
+   (2) while comp_(parent, me): swap with parent, repeat
+
+        50                              50
+       /  \                            /  \
+     30    40          →             30    45
+    / \   / \                       / \   / \
+  10 20 35 25                     10 20 35 25
+  /
+ 45  → bubbles up until parent ≥ 45
+```
+
+At most `⌊log₂ n⌋` swaps.
+
+### 4.2 Pop — replace root with last, sift-down
+
+```
+   pop() removes 50:
+
+   (1) move c_.back() → c_[0]
+   (2) pop_back()  (size shrinks)
+   (3) heapify_down(0) — swap with larger child until heap restored
+
+   root had 25 after move → sinks past 40, 35, …
+```
+
+### 4.3 Floyd's `build_heap` — O(n) bulk fix
+
+Used by range/container constructors:
+
+```
+   start i = parent(n-1), count down to 0:
+       heapify_down(i)
+
+   Fixes subtrees bottom-up; faster than n successive pushes for large n.
+```
+
+### 4.4 Comparator semantics (read carefully)
+
+`comp_(a, b) == true` means **a is lower priority than b**. For max-heap,
+`std::less` makes the **largest** float to the top because parents are not less
+than children.
+
+---
+
+## 5. API Reference
+
+### Construction
+| Call | Effect |
+|---|---|
+| `PriorityQueue<T>()` | empty max-heap |
+| `PriorityQueue(cmp)` | empty with comparator |
+| `PriorityQueue(cmp, cont)` | copy container + `build_heap()` |
+| `PriorityQueue(first, last, cmp)` | range + heapify |
+| copy / move | duplicate or steal `c_` and `comp_` |
+
+### Element access
+| Call | On empty |
+|---|---|
+| `top()` | throws `std::out_of_range` |
+
+### Modifiers
+`push`, `emplace`, `pop` (throws if empty), `swap`
+
+### Debug
+`is_heap()` — validates heap property
+
+---
+
+## 6. Complexity Summary
+
+| Operation | Complexity | Note |
+|---|---|---|
+| `top` | O(1) | index 0 |
+| `push` | O(log n) | sift-up height |
+| `pop` | O(log n) | sift-down height |
+| `build_heap` | O(n) | Floyd |
+| `size`, `empty` | O(1) | |
+
+---
+
+## 7. Usage
+
+```cpp
+#include "priority_queue/priority_queue.hpp"
+
+PriorityQueue<int> pq;   // max-heap
+pq.push(30);
+pq.push(10);
+pq.push(50);
+std::cout << pq.top();   // 50
+pq.pop();
+
+// min-heap
+PriorityQueue<int, std::vector<int>, std::greater<int>> minpq;
+minpq.push(30);
+std::cout << minpq.top();  // 10
+```
+
+See [`priority_queue_example.cpp`](priority_queue_example.cpp) for range construction,
+custom comparators, median-from-stream, and top-K.
+
+---
+
+## 8. Design Decisions & Trade-offs
+
+- **Vector-backed binary heap** — cache-friendly, matches `std::priority_queue`.
+- **0-based index formulas** — standard textbook layout; root at `front()`.
+- **Throws on empty `top`/`pop`** — stricter than STL (UB there); clearer for learners.
+- **Floyd build on bulk ctor** — teaches O(n) heapify vs repeated O(log n) pushes.
+- **Not stable** — equal priorities may reorder; tie-breaking is unspecified.
+
+---
+
+## 9. Common Pitfalls
+
+- **Comparator direction.** `std::less` → max-heap; `std::greater` → min-heap. Easy to invert.
+- **Assuming FIFO among equal keys** — heap does not guarantee insertion order.
+- **`top` on empty** — throws here; still UB in `std::priority_queue`.
+- **Using `operator[]` mental model** — only `top()` is visible; rest is hidden in the heap.
+
+---
+
+## 10. Comparison with `std::priority_queue`
+
+**Same:** vector default, comparator template param, max-heap by default, push/pop/top.
+
+**Differences:** we throw on empty access; expose `is_heap()` for tests; same core algorithms.
+
+---
+
+## 11. Build & Run
+
+```bash
+g++ -std=c++14 -Wall -Wextra -Wpedantic -I. priority_queue/priority_queue_example.cpp -o /tmp/x_priority_queue
+/tmp/x_priority_queue
+
+make run-priority_queue
+make test-priority_queue
+```
+
+---
+
+## 12. See Also
+
+- [`vector`](../vector/README.md) — storage array under the heap
+- [`queue`](../queue/README.md) — FIFO, not priority-ordered
+- [`set`](../set/README.md) — sorted all-elements view, O(log n) every op

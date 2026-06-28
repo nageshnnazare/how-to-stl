@@ -1,24 +1,178 @@
+/**
+ * @file multimap_example.cpp
+ * @brief Runnable tour of Multimap<Key,T> — sorted vector, duplicate keys OK.
+ *
+ * Demonstrates multiple values per key, count via equal_range, find first match,
+ * erase-all for a key, and key-sorted iteration.
+ */
+
 #include "multimap/multimap.hpp"
 #include <iostream>
 #include <string>
 
-int main() {
-    std::cout << "=== Multimap Examples ===\n\n";
-    
+// ---------------------------------------------------------------------------
+// Section 1: Same key, multiple values — all stored in one contiguous key block
+// ---------------------------------------------------------------------------
+void example_duplicate_keys() {
+    std::cout << "\n=== 1. Duplicate keys — one-to-many mapping ===\n";
+
     Multimap<std::string, int> scores;
     scores.insert({"Alice", 90});
     scores.insert({"Bob", 85});
-    scores.insert({"Alice", 95});  // Duplicate key allowed
+    scores.insert({"Alice", 95});
     scores.insert({"Alice", 88});
-    
-    std::cout << "Scores:\n";
+
+    std::cout << "All entries (sorted by key):\n";
     for (const auto& p : scores) {
         std::cout << "  " << p.first << ": " << p.second << "\n";
     }
-    
-    std::cout << "\nCount for Alice: " << scores.count("Alice") << "\n";
-    std::cout << "Count for Bob: " << scores.count("Bob") << "\n";
-    
-    std::cout << "\n✓ Examples completed!\n";
+}
+
+// ---------------------------------------------------------------------------
+// Section 2: count — number of pairs sharing a key
+// ---------------------------------------------------------------------------
+void example_count() {
+    std::cout << "\n=== 2. count per key ===\n";
+
+    Multimap<std::string, int> scores;
+    scores.insert({"Alice", 90});
+    scores.insert({"Alice", 95});
+    scores.insert({"Alice", 88});
+    scores.insert({"Bob", 85});
+
+    std::cout << "count(Alice) = " << scores.count("Alice") << "\n";
+    std::cout << "count(Bob)   = " << scores.count("Bob") << "\n";
+    std::cout << "count(Eve)   = " << scores.count("Eve") << "\n";
+}
+
+// ---------------------------------------------------------------------------
+// Section 3: find — iterator to first pair with key (start of equal_range)
+// ---------------------------------------------------------------------------
+void example_find() {
+    std::cout << "\n=== 3. find — first pair for a key ===\n";
+
+    Multimap<std::string, int> scores;
+    scores.insert({"Alice", 90});
+    scores.insert({"Alice", 95});
+
+    if (scores.contains("Alice")) {
+        auto it = scores.find("Alice");
+        std::cout << "First Alice entry: " << it->second << "\n";
+        ++it;
+        if (it != scores.end() && it->first == "Alice") {
+            std::cout << "Second Alice entry: " << it->second << "\n";
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Section 4: erase(key) — removes every pair with that key
+// ---------------------------------------------------------------------------
+void example_erase() {
+    std::cout << "\n=== 4. erase — all pairs for a key removed ===\n";
+
+    Multimap<std::string, int> scores;
+    scores.insert({"Alice", 90});
+    scores.insert({"Bob", 85});
+    scores.insert({"Alice", 95});
+    scores.insert({"Alice", 88});
+
+    std::cout << "Size before erase(Alice): " << scores.size() << "\n";
+    size_t n = scores.erase("Alice");
+    std::cout << "erase(Alice) removed " << n << " pairs; size now " << scores.size() << "\n";
+
+    std::cout << "Remaining:\n";
+    for (const auto& p : scores) {
+        std::cout << "  " << p.first << ": " << p.second << "\n";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Section 5: Initializer list — arbitrary insert order, printed in key order
+// ---------------------------------------------------------------------------
+void example_initializer_list() {
+    std::cout << "\n=== 5. Initializer list ===\n";
+
+    Multimap<int, std::string> m = {{3, "c"}, {1, "a"}, {2, "b"}, {1, "A"}};
+
+    for (const auto& p : m) {
+        std::cout << "  " << p.first << " -> " << p.second << "\n";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Section 6: contains — quick membership on keys
+// ---------------------------------------------------------------------------
+void example_contains() {
+    std::cout << "\n=== 6. contains ===\n";
+
+    Multimap<std::string, int> tags;
+    tags.insert({"cpp", 1});
+    tags.insert({"stl", 2});
+
+    std::cout << "contains(\"cpp\"): " << tags.contains("cpp") << "\n";
+    std::cout << "contains(\"java\"): " << tags.contains("java") << "\n";
+}
+
+int main() {
+    std::cout << "=================================================\n";
+    std::cout << "       Multimap Class Examples                  \n";
+    std::cout << "=================================================\n";
+
+    example_duplicate_keys();
+    example_count();
+    example_find();
+    example_erase();
+    example_initializer_list();
+    example_contains();
+
+    std::cout << "\n=================================================\n";
+    std::cout << "   All examples completed successfully!        \n";
+    std::cout << "=================================================\n";
+
     return 0;
 }
+
+/* ===== EXPECTED OUTPUT (sample run) ============================================
+ * Auto-generated by running this program (see tests/README.md).
+ * ----------------------------------------------------------------------------
+=================================================
+       Multimap Class Examples                  
+=================================================
+
+=== 1. Duplicate keys — one-to-many mapping ===
+All entries (sorted by key):
+  Alice: 88
+  Alice: 95
+  Alice: 90
+  Bob: 85
+
+=== 2. count per key ===
+count(Alice) = 3
+count(Bob)   = 1
+count(Eve)   = 0
+
+=== 3. find — first pair for a key ===
+First Alice entry: 95
+Second Alice entry: 90
+
+=== 4. erase — all pairs for a key removed ===
+Size before erase(Alice): 4
+erase(Alice) removed 3 pairs; size now 1
+Remaining:
+  Bob: 85
+
+=== 5. Initializer list ===
+  1 -> A
+  1 -> a
+  2 -> b
+  3 -> c
+
+=== 6. contains ===
+contains("cpp"): 1
+contains("java"): 0
+
+=================================================
+   All examples completed successfully!        
+=================================================
+ * ============================================================================ */

@@ -1,0 +1,45 @@
+name: Build & Test
+
+# Compile every example + test and run the full test suite on each push / PR.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show compiler version
+        run: g++ --version
+
+      - name: Build everything (examples + tests)
+        run: make all
+
+      - name: Run the full test suite
+        run: make test
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    # Re-run the suites under AddressSanitizer + UBSan to catch memory/UB bugs
+    # that a plain build can miss (e.g. reallocation / rehash edge cases).
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run all test suites under ASan + UBSan
+        run: |
+          status=0
+          for t in tests/*_test.cpp; do
+            name=$(basename "$t" .cpp)
+            echo "=== $name (asan+ubsan) ==="
+            g++ -std=c++14 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+                -pthread -I. "$t" -o "/tmp/$name" || { status=1; continue; }
+            ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 \
+                "/tmp/$name" > /dev/null || { echo "FAILED: $name"; status=1; }
+          done
+          exit $status

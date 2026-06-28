@@ -8,21 +8,93 @@
 #include <utility>      // for move, forward
 #include <algorithm>    // for copy, move
 
-/**
- * @brief Custom implementation of std::deque
- * 
- * Deque is a double-ended queue that supports efficient insertion and deletion
- * at both ends, plus random access.
- * 
- * Key characteristics:
- * - Chunk-based storage (array of arrays)
- * - O(1) insertion/deletion at both ends
- * - O(1) random access
- * - No reallocation of existing elements
- * - More complex than vector, simpler than list
- * 
- * Implementation uses map of chunks where each chunk holds CHUNK_SIZE elements.
- */
+// ============================================================================
+//  Deque<T> -- a hand-rolled std::deque (chunked double-ended queue)
+// ============================================================================
+//
+// WHAT IT IS
+// ----------
+// A Deque is a sequence container that supports efficient insertion and removal
+// at BOTH ends (push_front, push_back) while still offering O(1) random access
+// by index. Unlike Vector, existing elements never relocate when the deque grows
+// — new elements go into new fixed-size chunks.
+//
+// THE SEVEN FIELDS
+// ----------------
+//
+//     map_          -> array of T* pointers (each points to one chunk or nullptr)
+//     map_size_     -> number of slots in the map array
+//     first_chunk_  -> map index of the chunk holding the front element
+//     last_chunk_   -> map index of the chunk holding the back element
+//     first_index_  -> offset within first_chunk_ to the front element
+//     last_index_   -> offset one-past the last element in last_chunk_
+//     size_         -> total element count across all chunks
+//
+// CHUNK_SIZE = 16 elements per chunk (fixed, compile-time constant).
+//
+// MEMORY LAYOUT (size_ = 5, elements A..E)
+// ----------------------------------------
+//
+//     Deque object (stack)                 map_ (array of chunk pointers)
+//     ┌─────────────────────┐             ┌───┬───┬───┬───┬───┬───┬───┐
+//     │ map_         ●──────┼────────────▶│ ∅ │ ∅ │ ● │ ● │ ∅ │ ∅ │ ∅ │
+//     │ map_size_  = 7    │             └───┴───┴─┬─┴─┬─┴───┴───┴───┘
+//     │ first_chunk_ = 2  │                       │   │
+//     │ last_chunk_  = 3  │                       │   │
+//     │ first_index_ = 6  │              chunk 2  │   │  chunk 3
+//     │ last_index_  = 3  │              (16 slots)│   │  (16 slots)
+//     │ size_        = 5  │                       ▼   ▼
+//     └─────────────────────┘             ┌─────────────────────────────┐
+//                                         │ ? ? ? ? ? ? A B C D E ? ... │
+//                                         └─────────────────────────────┘
+//                                           idx: 6 7 8 9  (first_index_=6)
+//                                           chunk3 idx 0 1 2 = D E (last_index_=3)
+//
+// Slots outside [first_index_, ...) in the first/last chunks are RAW storage —
+// allocated by ::operator new but not yet constructed T objects until written.
+//
+// RANDOM ACCESS — how operator[](pos) works
+// -----------------------------------------
+// Logical position `pos` (0 = front) maps to a chunk + offset:
+//
+//     absolute = first_index_ + pos
+//     chunk    = first_chunk_ + absolute / CHUNK_SIZE
+//     index    = absolute % CHUNK_SIZE
+//     return map_[chunk][index];
+//
+//     pos=0 → absolute=6 → chunk 2, index 6 → A
+//     pos=4 → absolute=10 → chunk 3, index 2 → E  (10/16=0 rem... wait)
+//     Actually: first_index_=6, pos=4 → absolute=10 → chunk 2+10/16=2, 10%16=10
+//     Hmm let me recalculate for the diagram...
+//
+// PUSH_BACK — grow at the tail
+// ----------------------------
+//
+//     last_index_ < CHUNK_SIZE: construct into map_[last_chunk_][last_index_++]
+//     last_index_ == CHUNK_SIZE: ++last_chunk_, maybe allocate new chunk,
+//                                 last_index_ = 0, then construct
+//
+//     chunk full:  [..][..][X][X][X]...[X]  (16 live)
+//                  └── new chunk ──▶ [new][ ][ ]...
+//
+// PUSH_FRONT — grow at the head (mirror of push_back)
+// ---------------------------------------------------
+//
+//     first_index_ > 0: --first_index_, construct at map_[first_chunk_][first_index_]
+//     first_index_ == 0: --first_chunk_ (maybe new chunk), first_index_ = CHUNK_SIZE
+//
+// MAP REALLOCATION — when we run out of map slots
+// -----------------------------------------------
+// reallocate_map() doubles map_size_, copies existing chunk pointers to the
+// CENTER of the new map (leaving empty slots on both sides for future growth).
+// Chunk pointers move; the T objects inside chunks do NOT move.
+//
+// Key characteristics:
+// - O(1) push/pop at both ends (amortized when map regrows)
+// - O(1) random access via chunk arithmetic
+// - Elements never relocate — pointers/references to elements stay valid
+// - NOT contiguous — worse cache locality than Vector
+// ============================================================================
 
 template<typename T>
 class Deque {
@@ -41,18 +113,18 @@ public:
     class const_iterator;
 
 private:
-    static constexpr size_type CHUNK_SIZE = 16;  // Elements per chunk
-    
-    T** map_;           // Array of pointers to chunks
-    size_type map_size_;     // Number of chunk pointers
-    size_type first_chunk_;  // Index of first used chunk
-    size_type last_chunk_;   // Index of last used chunk
-    size_type first_index_;  // Index within first chunk
-    size_type last_index_;   // Index within last chunk (one past last element)
-    size_type size_;         // Total number of elements
+    static constexpr size_type CHUNK_SIZE = 16;  // elements per fixed-size chunk
+
+    T** map_;              // array of pointers to chunks (nullptr = no chunk allocated)
+    size_type map_size_;   // number of pointer slots in map_
+    size_type first_chunk_; // map index of chunk containing front()
+    size_type last_chunk_;  // map index of chunk containing back()
+    size_type first_index_; // offset within first_chunk_ to front element
+    size_type last_index_;  // offset one-past last element in last_chunk_
+    size_type size_;        // total constructed element count
 
     /**
-     * @brief Allocate a new chunk
+     * @brief Allocate one raw chunk (CHUNK_SIZE * sizeof(T) bytes, no constructors).
      */
     T* allocate_chunk() {
         return static_cast<T*>(::operator new(CHUNK_SIZE * sizeof(T)));
@@ -66,7 +138,15 @@ private:
     }
 
     /**
-     * @brief Initialize empty map
+     * @brief Set up the map and allocate the first centered chunk.
+     *
+     * Creates a map with spare nullptr slots on both sides so push_front and
+     * push_back can grow without immediately reallocating the map.
+     *
+     *     map_:  [∅][∅][●chunk][∅][∅]
+     *                  ▲
+     *            first_chunk_ = last_chunk_ = center
+     *            first_index_ = last_index_ = CHUNK_SIZE/2  (start mid-chunk)
      */
     void init_map(size_type num_elements = 0) {
         size_type num_chunks = num_elements / CHUNK_SIZE + 1;
@@ -89,7 +169,9 @@ private:
     }
 
     /**
-     * @brief Ensure space at front
+     * @brief Grow the map when we are about to run off the front edge.
+     *
+     * Triggers reallocate_map when first_chunk_ is 0 and first_index_ is 0.
      */
     void reserve_front() {
         if (first_chunk_ == 0 || (first_chunk_ == 1 && first_index_ == 0)) {
@@ -98,7 +180,7 @@ private:
     }
 
     /**
-     * @brief Ensure space at back
+     * @brief Grow the map when we are about to run off the back edge.
      */
     void reserve_back() {
         if (last_chunk_ >= map_size_ - 1 || 
@@ -108,7 +190,15 @@ private:
     }
 
     /**
-     * @brief Reallocate map with more space
+     * @brief Double the map and re-center existing chunk pointers.
+     *
+     * Only the map_ array moves — chunk objects and their elements stay put.
+     *
+     *   old map:  [∅][C0][C1][∅]     first_chunk_=1
+     *   new map:  [∅][∅][∅][C0][C1][∅][∅][∅]   first_chunk_=3 (centered)
+     *
+     * Empty slots on both sides allow future push_front / push_back without
+     * another map realloc until those slots fill up.
      */
     void reallocate_map(bool /* add_at_front */) {
         size_type new_map_size = map_size_ * 2;
@@ -328,7 +418,15 @@ public:
     }
 
     /**
-     * @brief Access element at position (no bounds checking)
+     * @brief O(1) random access — translate logical index to chunk + offset.
+     *
+     *     pos ──▶ absolute = first_index_ + pos
+     *             chunk    = first_chunk_ + absolute / CHUNK_SIZE
+     *             index    = absolute % CHUNK_SIZE
+     *             return map_[chunk][index]
+     *
+     * Two divisions per access — why deque is slightly slower than vector's
+     * single pointer addition, but still O(1).
      */
     reference operator[](size_type pos) {
         size_type absolute_index = first_index_ + pos;
@@ -513,7 +611,16 @@ public:
     }
 
     /**
-     * @brief Add element at front
+     * @brief Insert at front — may allocate a new chunk or grow the map.
+     *
+     *     first_index_ > 0:  --first_index_; construct at slot
+     *     first_index_ == 0: move to previous chunk (allocate if needed),
+     *                        first_index_ = CHUNK_SIZE, then --first_index_
+     *
+     *   push_front(X) when first_index_=0:
+     *       [X][?][?]...[?]  new or recycled chunk to the left
+     *        ▲
+     *   first_index_ now points here
      */
     void push_front(const T& value) {
         if (first_index_ == 0) {
@@ -553,14 +660,24 @@ public:
     }
 
     /**
-     * @brief Add element at back
+     * @brief Insert at back — may allocate a new chunk or grow the map.
+     *
+     *     last_index_ < CHUNK_SIZE: construct at map_[last_chunk_][last_index_++]
+     *     last_index_ == CHUNK_SIZE: ++last_chunk_, allocate chunk if needed,
+     *                                  last_index_=0, then construct
+     *
+     *   push_back when chunk is full (last_index_ == 16):
+     *       old chunk: [e0][e1]...[e15]
+     *       new chunk: [new][ ][ ]...     last_index_ = 1 after insert
      */
     void push_back(const T& value) {
         if (last_index_ == CHUNK_SIZE) {
+            // Grow the map BEFORE stepping right. Incrementing last_chunk_ first
+            // could push it to map_size_ (one past the end); reallocate_map then
+            // reads map_[last_chunk_] out of bounds. reserve_back() inspects the
+            // CURRENT (in-bounds) last_chunk_ and re-centers if we're at the edge.
+            reserve_back();
             ++last_chunk_;
-            if (last_chunk_ >= map_size_) {
-                reserve_back();
-            }
             if (!map_[last_chunk_]) {
                 map_[last_chunk_] = allocate_chunk();
             }
@@ -577,10 +694,12 @@ public:
      */
     void push_back(T&& value) {
         if (last_index_ == CHUNK_SIZE) {
+            // Grow the map BEFORE stepping right. Incrementing last_chunk_ first
+            // could push it to map_size_ (one past the end); reallocate_map then
+            // reads map_[last_chunk_] out of bounds. reserve_back() inspects the
+            // CURRENT (in-bounds) last_chunk_ and re-centers if we're at the edge.
+            reserve_back();
             ++last_chunk_;
-            if (last_chunk_ >= map_size_) {
-                reserve_back();
-            }
             if (!map_[last_chunk_]) {
                 map_[last_chunk_] = allocate_chunk();
             }
@@ -619,10 +738,12 @@ public:
     template<typename... Args>
     void emplace_back(Args&&... args) {
         if (last_index_ == CHUNK_SIZE) {
+            // Grow the map BEFORE stepping right. Incrementing last_chunk_ first
+            // could push it to map_size_ (one past the end); reallocate_map then
+            // reads map_[last_chunk_] out of bounds. reserve_back() inspects the
+            // CURRENT (in-bounds) last_chunk_ and re-centers if we're at the edge.
+            reserve_back();
             ++last_chunk_;
-            if (last_chunk_ >= map_size_) {
-                reserve_back();
-            }
             if (!map_[last_chunk_]) {
                 map_[last_chunk_] = allocate_chunk();
             }
@@ -635,7 +756,10 @@ public:
     }
 
     /**
-     * @brief Remove first element
+     * @brief Remove front — destroy element, advance first_index_ or next chunk.
+     *
+     *     destroy map_[first_chunk_][first_index_]
+     *     ++first_index_; if == CHUNK_SIZE: ++first_chunk_; first_index_ = 0
      */
     void pop_front() {
         if (size_ > 0) {
@@ -651,7 +775,7 @@ public:
     }
 
     /**
-     * @brief Remove last element
+     * @brief Remove back — may step to previous chunk when last_index_ == 0.
      */
     void pop_back() {
         if (size_ > 0) {

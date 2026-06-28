@@ -1,240 +1,225 @@
-# Stack Implementation
+# Stack — LIFO Container Adapter
 
-LIFO (Last In, First Out) container adapter providing stack operations.
+> A `Stack<T>` exposes **Last In, First Out** access on top of an underlying
+> sequence (default `std::deque<T>`). You only ever touch the **top** — push adds
+> there, pop removes there, `top()` reads there. Everything else is hidden.
 
-## Features
-- **LIFO Access**: Last element added is first to be removed
-- **O(1) Operations**: Constant time push, pop, and top
-- **Container Adapter**: Built on deque (or vector/list)
-- **Type Safe**: Templated for any type
-- **STL Compatible**: Same interface as std::stack
+This is a from-scratch reimplementation of `std::stack` built for learning. The
+header is [`stack.hpp`](stack.hpp), runnable examples are in
+[`stack_example.cpp`](stack_example.cpp), and the test suite is in
+[`../tests/stack_test.cpp`](../tests/stack_test.cpp).
 
-## Quick Example
+---
+
+## 1. What It Is
+
+| Property | Value |
+|---|---|
+| Kind | **Container adapter** (not a standalone allocator) |
+| Default backend | `std::deque<T>` |
+| Access | **Top only** (maps to `back()` of underlying sequence) |
+| Order | LIFO — last pushed is first popped |
+| Iteration | **None** (by design) |
+
+**Reach for a Stack when** you need undo history, DFS, bracket matching, expression
+evaluation, or any algorithm that walks backward through recent choices.
+
+**Look elsewhere when** you need FIFO ([`queue`](../queue/README.md)), priority
+([`priority_queue`](../priority_queue/README.md)), or random access ([`vector`](../vector/README.md)).
+
+---
+
+## 2. Mental Model
+
+The adapter owns one field `c_`. The **top** of the stack is the **back** of `c_`:
+
+```
+   Stack                         underlying deque c_
+   ┌──────────┐                 front                    back = TOP
+   │ c_    ●──┼────────────────▶ [10] [20] [30] [40]
+   └──────────┘                                      ▲
+                                              push / pop / top
+```
+
+Vertical LIFO picture:
+
+```
+        push 40 ──▶  ┌─────┐
+        push 30 ──▶  │ 40  │  ← top
+        push 20 ──▶  │ 30  │
+        push 10 ──▶  │ 20  │
+                       │ 10  │
+                       └─────┘
+        pop() → 40, then 30, then 20 …
+```
+
+---
+
+## 3. Internal Representation
 
 ```cpp
+Container c_;  // default std::deque<T>
+```
+
+**Mapping (fixed by this implementation):**
+
+| Stack op | Underlying call | End |
+|---|---|---|
+| `push(x)` | `c_.push_back(x)` | back (top) |
+| `pop()` | `c_.pop_back()` | back |
+| `top()` | `c_.back()` | back |
+
+No extra metadata — stack size is `c_.size()`.
+
+---
+
+## 4. How It Works (Step by Step)
+
+### 4.1 Push — grow at top (back)
+
+```
+   push(30) on [10, 20]:
+
+   [10][20]  ──push_back(30)──▶  [10][20][30]
+                                    top ────▲
+```
+
+O(1) amortized with deque or vector backend.
+
+### 4.2 Pop — shrink at top (does not return value)
+
+```
+   pop() on [10][20][30]:
+
+   [10][20][30]  ──pop_back()──▶  [10][20]
+                    top was 30
+```
+
+Call `top()` before `pop()` if you need the value. Undefined if empty.
+
+### 4.3 Top — read without mutation
+
+```
+   top() → reference to c_.back()
+```
+
+### 4.4 Custom backend (`Stack<T, std::vector<T>>`)
+
+Same API; **top** is still `vector::back()`. Vector may reallocate on growth
+(invalidating references); deque avoids that — why deque is the default.
+
+---
+
+## 5. API Reference
+
+### Construction
+| Call | Effect |
+|---|---|
+| `Stack<T>()` | empty deque |
+| `Stack<T>(container)` | copy-wrap existing sequence |
+| `Stack<T>(std::move(container))` | move-wrap |
+| copy / move ctor, assignment | deep copy / steal `c_` |
+
+### Element access
+| Call | Notes |
+|---|---|
+| `top()` | mutable / const; UB if empty |
+
+### Capacity
+`empty()`, `size()`
+
+### Modifiers
+`push`, `emplace`, `pop`, `swap`
+
+### Non-member
+`==`, `!=`, `<`, `<=`, `>`, `>=` (lexicographic on `c_`), free `swap`
+
+---
+
+## 6. Complexity Summary
+
+| Operation | Complexity | Note |
+|---|---|---|
+| `push` | O(1) amortized | deque/vector back insert |
+| `pop` | O(1) | back erase |
+| `top` | O(1) | |
+| `empty`, `size` | O(1) | |
+| `swap` | O(1) | swaps underlying containers |
+
+---
+
+## 7. Usage
+
+```cpp
+#include "stack/stack.hpp"
+
 Stack<int> s;
 s.push(10);
 s.push(20);
 s.push(30);
 
-std::cout << s.top();  // 30 (last in)
+std::cout << s.top();  // 30
 s.pop();
 std::cout << s.top();  // 20
+
+// Vector backend (still LIFO at back)
+Stack<int, std::vector<int>> sv;
+sv.push(1);
 ```
 
-## Operations
-
-- `push(value)` - Add element to top (O(1))
-- `pop()` - Remove top element (O(1))
-- `top()` - Access top element (O(1))
-- `emplace(args...)` - Construct element in-place (O(1))
-- `size()`, `empty()` - Capacity queries (O(1))
-- `swap(other)` - Swap contents (O(1))
-
-## Use Cases
-
-### 1. Balanced Parentheses
-```cpp
-bool is_balanced(const std::string& expr) {
-    Stack<char> s;
-    for (char c : expr) {
-        if (c == '(') s.push(c);
-        else if (c == ')') {
-            if (s.empty()) return false;
-            s.pop();
-        }
-    }
-    return s.empty();
-}
-```
-
-### 2. Reverse String
-```cpp
-std::string reverse(const std::string& str) {
-    Stack<char> s;
-    for (char c : str) s.push(c);
-    
-    std::string reversed;
-    while (!s.empty()) {
-        reversed += s.top();
-        s.pop();
-    }
-    return reversed;
-}
-```
-
-### 3. Undo/Redo System
-```cpp
-Stack<State> undo_stack;
-Stack<State> redo_stack;
-
-void execute_action(State new_state) {
-    undo_stack.push(current_state);
-    current_state = new_state;
-    // Clear redo on new action
-    redo_stack = Stack<State>();
-}
-
-void undo() {
-    if (!undo_stack.empty()) {
-        redo_stack.push(current_state);
-        current_state = undo_stack.top();
-        undo_stack.pop();
-    }
-}
-```
-
-### 4. Postfix Expression Evaluation
-```cpp
-int evaluate_postfix(const std::vector<std::string>& tokens) {
-    Stack<int> s;
-    for (const auto& token : tokens) {
-        if (is_operator(token)) {
-            int b = s.top(); s.pop();
-            int a = s.top(); s.pop();
-            s.push(apply(a, b, token));
-        } else {
-            s.push(std::stoi(token));
-        }
-    }
-    return s.top();
-}
-```
-
-### 5. Depth-First Search (DFS)
-```cpp
-void dfs(int start, const Graph& graph) {
-    Stack<int> s;
-    std::vector<bool> visited(graph.size(), false);
-    
-    s.push(start);
-    while (!s.empty()) {
-        int node = s.top();
-        s.pop();
-        
-        if (!visited[node]) {
-            visited[node] = true;
-            process(node);
-            
-            for (int neighbor : graph[node]) {
-                if (!visited[neighbor]) {
-                    s.push(neighbor);
-                }
-            }
-        }
-    }
-}
-```
-
-### 6. Min Stack (Track Minimum)
-```cpp
-struct MinStack {
-    Stack<int> data;
-    Stack<int> mins;
-    
-    void push(int x) {
-        data.push(x);
-        if (mins.empty() || x <= mins.top()) {
-            mins.push(x);
-        }
-    }
-    
-    void pop() {
-        if (data.top() == mins.top()) {
-            mins.pop();
-        }
-        data.pop();
-    }
-    
-    int top() { return data.top(); }
-    int get_min() { return mins.top(); }
-};
-```
-
-## Underlying Container
-
-Stack can be built on different containers:
-
-```cpp
-// Default: deque (good balance)
-Stack<int> s1;
-
-// With vector (cache-friendly)
-Stack<int, std::vector<int>> s2;
-
-// With list (stable pointers)
-Stack<int, std::list<int>> s3;
-```
-
-## Performance
-
-| Operation | Time | Space |
-|-----------|------|-------|
-| push | O(1) | O(1) |
-| pop | O(1) | O(1) |
-| top | O(1) | O(1) |
-| empty/size | O(1) | O(1) |
-
-## When to Use
-
-**Use Stack when:**
-- Need LIFO (Last In, First Out) access
-- Implementing DFS, backtracking
-- Expression evaluation (postfix/prefix)
-- Undo/redo functionality
-- Function call simulation
-- Parentheses matching
-
-**Don't use when:**
-- Need FIFO (use Queue)
-- Need random access (use Vector)
-- Need both ends (use Deque)
-
-## Algorithm Applications
-
-1. **Backtracking**: Maze solving, N-Queens
-2. **Parsing**: Compiler design, expression evaluation
-3. **DFS**: Graph traversal, topological sort
-4. **Undo Systems**: Text editors, games
-5. **Function Calls**: Call stack simulation
-6. **Browser History**: Back button
-
-## Examples
-
-See `stack_example.cpp` for 10 comprehensive examples:
-1. Basic operations
-2. String stack (undo system)
-3. Balanced parentheses checker
-4. Reverse string
-5. Postfix expression evaluation
-6. Undo/redo system
-7. DFS traversal
-8. Min stack tracking
-9. Copy and move semantics
-10. Custom container
-
-Run:
-```bash
-./build/stack_example
-```
-
-## Testing
-
-Run test suite:
-```bash
-./build/stack_test
-```
-
-All 15 tests cover:
-- Basic push/pop operations
-- LIFO ordering
-- Copy/move semantics
-- Comparison operators
-- Edge cases
+See [`stack_example.cpp`](stack_example.cpp) for parentheses checking, postfix
+evaluation, DFS, undo/redo, and min-stack patterns.
 
 ---
 
-**Lines of Code**: 200+ (implementation) + 300+ (examples) + 180+ (tests)  
-**Test Coverage**: 15/15 tests passing ✅  
-**Adapter Pattern**: Built on underlying container  
-**Complexity**: O(1) for all operations
+## 8. Design Decisions & Trade-offs
+
+- **Adapter, not a linked list stack.** Reuses battle-tested `deque` for O(1) ends
+  and cache-friendly blocks — same design as libstdc++/libc++ `std::stack`.
+- **Top = back.** Matches STL; all mutations at one end.
+- **No `pop` return value.** STL separates `top` and `pop` for exception safety
+  when `T` is expensive to copy.
+- **Comparison operators** delegate to underlying container — useful for tests.
+
+---
+
+## 9. Common Pitfalls
+
+- **Pop on empty** — undefined behavior; check `empty()` first.
+- **Stale references after `push`** — if using `vector` backend, reallocation may
+  invalidate references to elements; deque is safer.
+- **Using stack when you need FIFO** — you will process items in reverse order.
+- **`top()` on empty** — UB, same as `std::stack`.
+
+---
+
+## 10. Comparison with `std::stack`
+
+**Same:** adapter pattern, default `deque`, LIFO API, `push`/`pop`/`top`/`emplace`.
+
+**Same spirit:** no iterators, no size guarantees beyond underlying container.
+
+This teaching build adds **full comparison operators**; some STLs provide only `==`
+in C++20 and earlier.
+
+---
+
+## 11. Build & Run
+
+```bash
+g++ -std=c++14 -Wall -Wextra -Wpedantic -I. stack/stack_example.cpp -o /tmp/x_stack
+/tmp/x_stack
+
+# If your Makefile defines them:
+make run-stack
+make test-stack
+```
+
+---
+
+## 12. See Also
+
+- [`queue`](../queue/README.md) — FIFO adapter (opposite ends)
+- [`deque`](../deque/README.md) — default stack backend
+- [`vector`](../vector/README.md) — alternative stack backend
+- [`priority_queue`](../priority_queue/README.md) — heap adapter, not LIFO

@@ -6,42 +6,74 @@
 #include <cstddef>      // for std::nullptr_t
 #include <atomic>       // for std::atomic (thread-safe reference counting)
 
-/**
- * @brief Custom implementation of std::shared_ptr
- * 
- * shared_ptr is a smart pointer that retains shared ownership of an object through a pointer.
- * Multiple shared_ptr instances can own the same object. The object is destroyed when:
- * - The last remaining shared_ptr owning the object is destroyed, OR
- * - The last remaining shared_ptr owning the object is assigned another pointer
- * 
- * Key characteristics:
- * - Shared ownership: Multiple shared_ptr can own the same object
- * - Reference counting: Keeps track of how many shared_ptr own the object
- * - Thread-safe counting: Reference count updates are atomic
- * - Copyable: Can be copied to share ownership
- * - Moveable: Can be moved for efficiency
- */
+// ============================================================================
+//  SharedPtr<T> / WeakPtr<T> -- hand-rolled std::shared_ptr / std::weak_ptr
+// ============================================================================
+//
+// WHAT IT IS
+// ----------
+// SharedPtr shares ownership of one heap object across many handles. A separate
+// ControlBlock on the heap holds atomic strong/weak counts and the deleter.
+// When the last SharedPtr dies, the object is deleted; when both counts hit 0,
+// the control block is deleted. WeakPtr observes without keeping the object alive.
+//
+// SHARED_PTR FIELDS
+// -----------------
+//     ptr_  -> cached address of managed object (fast operator->)
+//     cb_   -> pointer to shared ControlBlock (counts + deleter + ptr_)
+//
+// MEMORY LAYOUT (two SharedPtrs, one object)
+// ------------------------------------------
+//
+//   SharedPtr A              ControlBlock (heap)           Object (heap)
+//   ┌──────────────┐        ┌────────────────────┐       ┌──────────┐
+//   │ ptr_    ●────┼───────>│ ptr_               │──────>│    T     │
+//   │ cb_     ●────┼───┐    │ shared_count_ = 2  │       └──────────┘
+//   └──────────────┘   │    │ weak_count_   = 0  │
+//                      │    │ deleter_           │
+//   SharedPtr B        │    └────────────────────┘
+//   ┌──────────────┐   │
+//   │ ptr_    ●────┼───┘  (same cb_)
+//   │ cb_     ●────┼──────> (same block)
+//   └──────────────┘
+//
+// STRONG COUNT LIFECYCLE
+// ----------------------
+//   copy SharedPtr  → shared_count++
+//   ~SharedPtr      → shared_count--; if was 1 → deleter_(object)
+//   weak_count==0 after that → delete control block
+//
+// Key characteristics:
+// - Copyable shared ownership; move transfers one owner's seat
+// - Atomic ref counts (thread-safe counting, NOT thread-safe *object* access)
+// - WeakPtr breaks cycles: observes via cb_, does not bump shared_count_
+// ============================================================================
 
 // Forward declarations
 template<typename T> class SharedPtr;
 template<typename T> class WeakPtr;
 
-/**
- * @brief Control block that manages reference counting and deletion
- * 
- * This is the heart of shared_ptr. It stores:
- * - The managed pointer
- * - Strong reference count (number of shared_ptr instances)
- * - Weak reference count (number of weak_ptr instances)
- * - The deleter function
- */
+// ============================================================================
+//  ControlBlock<T, Deleter> -- reference counts + deletion policy
+// ============================================================================
+//
+//     ┌─────────────────────────────────────┐
+//     │ ptr_          → managed object      │
+//     │ shared_count_ → # of SharedPtr      │
+//     │ weak_count_   → # of WeakPtr        │
+//     │ deleter_      → called at strong==0 │
+//     └─────────────────────────────────────┘
+//
+// Object deleted when shared_count hits 0. Control block deleted when
+// shared_count==0 AND weak_count==0 (WeakPtr may outlive the object).
+// ============================================================================
 template<typename T, typename Deleter>
 class ControlBlock {
 private:
-    T* ptr_;                              // Pointer to managed object
-    std::atomic<long> shared_count_;      // Strong reference count
-    std::atomic<long> weak_count_;        // Weak reference count
-    Deleter deleter_;                     // Deleter for the managed object
+    T* ptr_;                         // object address; set nullptr after deleter runs
+    std::atomic<long> shared_count_; // strong owners (SharedPtr instances)
+    std::atomic<long> weak_count_;   // weak observers (WeakPtr instances)
+    Deleter deleter_;                // invoked on ptr_ when last strong ref released
 
 public:
     /**
@@ -63,49 +95,54 @@ public:
     ControlBlock& operator=(const ControlBlock&) = delete;
 
     /**
-     * @brief Increment shared reference count
+     * @brief Strong ref ++ (SharedPtr copy / lock success).
+     *
+     *     shared_count_:  n  →  n+1   (relaxed — count alone needs no ordering)
      */
     void add_shared_ref() {
         shared_count_.fetch_add(1, std::memory_order_relaxed);
     }
 
     /**
-     * @brief Decrement shared reference count
-     * @return true if this was the last shared reference
+     * @brief Strong ref -- ; destroy object if this was the last owner.
+     *
+     *     fetch_sub returns previous value; if it was 1, we were the last SharedPtr:
+     *
+     *         shared: 1 → 0  →  deleter_(ptr_); ptr_=nullptr
+     *         if weak_count==0 → return true (caller deletes ControlBlock)
+     *
+     * acq_rel on decrement pairs with lock()'s acquire for visibility of writes.
      */
     bool release_shared_ref() {
-        // Decrement and check if we're the last owner
         if (shared_count_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            // We were the last shared owner - delete the object
             if (ptr_) {
                 deleter_(ptr_);
                 ptr_ = nullptr;
             }
             
-            // Now check if there are any weak references
             if (weak_count_.load(std::memory_order_acquire) == 0) {
-                return true;  // No weak refs, can delete control block
+                return true;
             }
         }
         return false;
     }
 
     /**
-     * @brief Increment weak reference count
+     * @brief Weak ref ++ (WeakPtr copy / construction from SharedPtr).
      */
     void add_weak_ref() {
         weak_count_.fetch_add(1, std::memory_order_relaxed);
     }
 
     /**
-     * @brief Decrement weak reference count
-     * @return true if this was the last weak reference and no shared refs exist
+     * @brief Weak ref -- ; free control block if no shared refs remain.
+     *
+     *     weak: 1 → 0  AND  shared==0  →  return true (delete cb)
      */
     bool release_weak_ref() {
         if (weak_count_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            // We were the last weak reference
             if (shared_count_.load(std::memory_order_acquire) == 0) {
-                return true;  // No shared refs either, can delete control block
+                return true;
             }
         }
         return false;
@@ -126,21 +163,24 @@ public:
     }
 
     /**
-     * @brief Try to lock weak reference (for weak_ptr::lock())
-     * @return true if successful (shared count was > 0)
+     * @brief weak_ptr::lock() — try to resurrect a strong ref (CAS loop).
+     *
+     *     load count; while count>0: CAS count→count+1
+     *     success → object still alive; fail → retry with updated count
+     *     count==0 → object already destroyed → return false
+     *
+     * WHY CAS: between expired() and increment, another thread may drop last SharedPtr.
      */
     bool try_add_shared_ref() {
         long count = shared_count_.load(std::memory_order_acquire);
         while (count > 0) {
-            // Try to increment if still > 0
             if (shared_count_.compare_exchange_weak(count, count + 1,
                                                      std::memory_order_acq_rel,
                                                      std::memory_order_acquire)) {
                 return true;
             }
-            // compare_exchange_weak updates count on failure, retry
         }
-        return false;  // Object already deleted
+        return false;
     }
 };
 
@@ -154,16 +194,11 @@ struct SharedPtrDeleter {
     }
 };
 
-/**
- * @brief Main SharedPtr implementation
- * 
- * @tparam T The type of the managed object
- */
 template<typename T>
 class SharedPtr {
 private:
-    T* ptr_;                                    // Pointer to managed object (for quick access)
-    ControlBlock<T, SharedPtrDeleter<T>>* cb_;  // Pointer to control block
+    T* ptr_;                                    // denormalized object address for fast ->
+    ControlBlock<T, SharedPtrDeleter<T>>* cb_;  // shared metadata; nullptr when empty
 
     // Friend declarations for cross-type access
     template<typename U> friend class SharedPtr;
@@ -206,26 +241,29 @@ public:
     constexpr SharedPtr(std::nullptr_t) noexcept : ptr_(nullptr), cb_(nullptr) {}
 
     /**
-     * @brief Construct from raw pointer
-     * @param p Raw pointer to take ownership of
-     * 
-     * Creates a new control block and takes ownership of the pointer.
-     * If construction fails, the pointer is deleted to prevent leaks.
+     * @brief Construct from raw pointer — allocate control block, shared_count=1.
+     *
+     *     new T  ──>  new ControlBlock(p, deleter)  ──>  ptr_, cb_ set
+     *
+     * If ControlBlock allocation throws → delete p (strong exception safety).
      */
     explicit SharedPtr(T* p) : ptr_(p), cb_(nullptr) {
         if (p) {
             try {
                 cb_ = new ControlBlock<T, SharedPtrDeleter<T>>(p, SharedPtrDeleter<T>());
             } catch (...) {
-                delete p;  // Clean up on failure
+                delete p;
                 throw;
             }
         }
     }
 
     /**
-     * @brief Copy constructor
-     * Shares ownership with other - increments reference count
+     * @brief Copy — share cb_, increment strong count.
+     *
+     *     sp1 ──┐
+     *           ├──> cb (shared++) ──> Object
+     *     sp2 ──┘
      */
     SharedPtr(const SharedPtr& other) noexcept
         : ptr_(other.ptr_), cb_(other.cb_) {
@@ -248,8 +286,9 @@ public:
     }
 
     /**
-     * @brief Move constructor
-     * Transfers ownership from other without modifying reference count
+     * @brief Move — steal ptr_/cb_; total shared_count unchanged.
+     *
+     *     other becomes empty; one owner's handle slot moves to this.
      */
     SharedPtr(SharedPtr&& other) noexcept
         : ptr_(other.ptr_), cb_(other.cb_) {
@@ -278,13 +317,15 @@ public:
     // ============================================================================
 
     /**
-     * @brief Destructor
-     * Decrements reference count and deletes object if this was the last owner
+     * @brief Destructor — release strong ref; maybe delete object + control block.
+     *
+     *     ~SharedPtr  →  release_shared_ref()
+     *         returns true  →  delete cb_  (no weak refs left)
+     *         returns false →  object and/or cb kept for WeakPtr
      */
     ~SharedPtr() {
         if (cb_) {
             if (cb_->release_shared_ref()) {
-                // No more shared or weak references - delete control block
                 delete cb_;
             }
         }
@@ -352,12 +393,15 @@ public:
     // ============================================================================
 
     /**
-     * @brief Replace the managed object
-     * @param p New pointer to manage (default: nullptr)
+     * @brief Rebind to p via copy-and-swap (strong guarantee).
+     *
+     *     SharedPtr temp(p);  swap(temp);  ~temp releases old ownership
+     *
+     * No-op if p == ptr_ (same raw address).
      */
     void reset(T* p = nullptr) {
         if (p == ptr_) {
-            return;  // Same pointer, nothing to do
+            return;
         }
         
         SharedPtr temp(p);
@@ -429,22 +473,23 @@ public:
     }
 };
 
-/**
- * @brief WeakPtr - non-owning observer of SharedPtr
- * 
- * weak_ptr holds a non-owning reference to an object managed by shared_ptr.
- * It must be converted to shared_ptr to access the object.
- * 
- * Use cases:
- * - Break circular references
- * - Cache objects without preventing deletion
- * - Observer pattern
- */
+// ============================================================================
+//  WeakPtr<T> -- non-owning observer; breaks SharedPtr cycles
+// ============================================================================
+//
+//     SharedPtr ──strong──> Object
+//     WeakPtr   ──weak────> ControlBlock only (weak_count++, NOT shared_count++)
+//
+// Cyclic leak without WeakPtr:
+//     A ──strong──> B ──strong──> A  → counts never hit 0
+//
+// Fix: one edge WeakPtr → object can die, weak refs decay, cb freed later.
+// ============================================================================
 template<typename T>
 class WeakPtr {
 private:
-    T* ptr_;                                    // Pointer to managed object
-    ControlBlock<T, SharedPtrDeleter<T>>* cb_;  // Pointer to control block
+    T* ptr_;                                    // cached address (may dangle if expired)
+    ControlBlock<T, SharedPtrDeleter<T>>* cb_;  // keeps control block metadata alive
 
     template<typename U> friend class SharedPtr;
     template<typename U> friend class WeakPtr;
@@ -473,8 +518,10 @@ public:
     }
 
     /**
-     * @brief Copy constructor from SharedPtr
-     * Creates a weak reference to the object owned by shared_ptr
+     * @brief Observe SharedPtr without keeping object alive.
+     *
+     *     shared_count unchanged; weak_count++
+     *     Object still deleted when last SharedPtr dies.
      */
     WeakPtr(const SharedPtr<T>& shared) noexcept
         : ptr_(shared.ptr_), cb_(shared.cb_) {
@@ -585,17 +632,18 @@ public:
     }
 
     /**
-     * @brief Create a shared_ptr that manages the observed object
-     * @return shared_ptr that shares ownership of the object
-     *         Empty shared_ptr if object was already deleted
+     * @brief Promote to SharedPtr if object still alive (atomic CAS in try_add_shared_ref).
+     *
+     *     try_add_shared_ref ok  →  SharedPtr(ptr_, cb_, add_ref=false)
+     *     failed / no cb_        →  empty SharedPtr
+     *
+     * add_ref=false: CAS already incremented; avoid double bump.
      */
     SharedPtr<T> lock() const noexcept {
         if (cb_ && cb_->try_add_shared_ref()) {
-            // Successfully incremented shared count
-            // Create SharedPtr and manually set members to avoid double-increment
-            return SharedPtr<T>(ptr_, cb_, false);  // false = don't increment again
+            return SharedPtr<T>(ptr_, cb_, false);
         }
-        return SharedPtr<T>();  // Object was deleted, return empty
+        return SharedPtr<T>();
     }
 };
 
@@ -665,16 +713,12 @@ void swap(WeakPtr<T>& lhs, WeakPtr<T>& rhs) noexcept {
 }
 
 /**
- * @brief Create a shared_ptr (C++11 make_shared equivalent)
- * 
- * This is the preferred way to create shared_ptr objects because:
- * 1. It's exception-safe
- * 2. It's more concise
- * 3. It's more efficient (single allocation for object + control block)
- * 4. It avoids explicit use of 'new'
- * 
- * Note: This simple implementation does two allocations (object + control block)
- * A production implementation would do a single allocation for better performance
+ * @brief Factory — wrap new T in SharedPtr (two allocations in this teaching impl).
+ *
+ *     new T  →  SharedPtr ctor  →  new ControlBlock
+ *
+ * Production std::make_shared fuses object+control block into one allocation.
+ * Here we keep them separate so both steps are visible when learning.
  */
 template<typename T, typename... Args>
 SharedPtr<T> makeShared(Args&&... args) {

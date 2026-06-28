@@ -1,529 +1,293 @@
-# Deque Class Implementation
+# Deque — Chunked Double-Ended Queue
 
-A complete implementation of a double-ended queue (deque) similar to `std::deque`.
+> A `Deque<T>` is a sequence you can grow at **both** ends in O(1) while still
+> indexing element `i` in O(1). Memory is split into fixed-size chunks (16
+> elements each) reached through a map of pointers — like a bookshelf of small
+> arrays instead of one long shelf. Existing elements never move when you
+> `push_front` or `push_back`; only new chunks are allocated.
 
-## Overview
+This is a from-scratch reimplementation of `std::deque` built for learning. The
+header is [`deque.hpp`](deque.hpp), runnable examples are in
+[`deque_example.cpp`](deque_example.cpp), and the test suite is in
+[`../tests/deque_test.cpp`](../tests/deque_test.cpp).
 
-The `Deque` class template provides a dynamic array with efficient insertion and deletion at both ends, plus random access.
+---
 
-### Key Features
+## 1. What It Is
 
-- **Double-Ended**: O(1) operations at both front and back
-- **Random Access**: O(1) element access by index
-- **Chunk-Based**: Memory organized in fixed-size chunks (no reallocation of existing elements)
-- **RAII**: Automatic cleanup, no memory leaks
-- **Move Semantics**: Efficient transfers of ownership
-- **Exception Safety**: Strong exception guarantees
-- **Rich API**: Compatible with std::deque interface
+| Property | Value |
+|---|---|
+| Storage | Map of pointers → fixed-size chunks (16 `T` each) |
+| Order | Insertion order (logical sequence across chunks) |
+| Random access | **Yes**, O(1) via chunk index + offset |
+| Grows | New chunks at front/back; map may double |
+| Contiguous? | **No** — elements span multiple non-adjacent chunks |
 
-## Quick Start
+**Reach for a Deque when** you need frequent `push_front` and `push_back` with
+random access, or when you must avoid invalidating pointers to existing elements
+during growth.
+
+**Look elsewhere when** you only append at the back and want maximum cache
+locality (see [`vector`](../vector/README.md)).
+
+---
+
+## 2. Mental Model
+
+Think of a deque as a **map** (array of chunk pointers) pointing at fixed-size
+**chunks** on the heap. Two cursors — `first_chunk_`/`first_index_` and
+`last_chunk_`/`last_index_` — mark where the live elements begin and end.
+
+```
+   Deque object                         map_ (chunk pointer table)
+   ┌──────────────────┐                ┌───┬───┬───┬───┬───┬───┬───┐
+   │ map_      ●──────┼───────────────▶│ ∅ │ ∅ │ ● │ ● │ ∅ │ ∅ │ ∅ │
+   │ first_chunk_ = 2 │                └───┴───┴─┬─┴─┬─┴───┴───┴───┘
+   │ last_chunk_  = 3 │                        │   │
+   │ first_index_ = 6 │               chunk 2   │   │  chunk 3
+   │ last_index_  = 3 │                        ▼   ▼
+   │ size_        = 5 │               ┌───┬───┬───┬───┬───┬─── ...
+   └──────────────────┘               │ ? │ ? │ A │ B │ C │ D │ E │
+                                      └───┴───┴───┴───┴───┴───┴───┘
+                                        6   7   8   9  (chunk 2)
+                                      chunk 3: D at [0], E at [1] if spanning...
+```
+
+Logical index `0` is `map_[first_chunk_][first_index_]`. Index `pos` is found by
+chunk arithmetic (see §4.3).
+
+---
+
+## 3. Internal Representation
+
+```cpp
+static constexpr size_type CHUNK_SIZE = 16;
+
+T**       map_;           // array of chunk pointers (nullptr = slot unused)
+size_type map_size_;      // number of slots in map_
+size_type first_chunk_;   // map index of front chunk
+size_type last_chunk_;    // map index of back chunk
+size_type first_index_;   // offset to front element within first chunk
+size_type last_index_;    // offset one-past last element in last chunk
+size_type size_;          // total element count
+```
+
+**Invariant:** `size_` equals the number of constructed elements spanning from
+`(first_chunk_, first_index_)` through `(last_chunk_, last_index_ - 1)`.
+
+### Chunk vs map
+
+| Structure | Holds | Grows when |
+|---|---|---|
+| **Chunk** | Up to 16 `T` objects in contiguous raw storage | `push_*` fills current chunk |
+| **Map** | `T*` pointers to chunks | No free map slots at front/back edge |
+
+Elements inside an existing chunk **never relocate**. Only the map array is
+reallocated and re-centered (chunk pointers copied, not the `T` objects).
+
+---
+
+## 4. How It Works (Step by Step)
+
+### 4.1 Initialization (`init_map`)
+
+An empty deque allocates a map with spare nullptr slots on both sides and one
+chunk centered in the middle. Elements start at `first_index_ = CHUNK_SIZE / 2`
+so there is room to grow in both directions within the first chunk.
+
+```
+   map_:  [∅][∅][●chunk][∅][∅]
+               ▲
+         first_chunk_ = last_chunk_ = center
+         first_index_ = last_index_ = 8  (middle of 16-slot chunk)
+```
+
+### 4.2 `push_back` — append at the tail
+
+```
+   room in current chunk (last_index_ < 16):
+       construct at map_[last_chunk_][last_index_++]
+
+   chunk full (last_index_ == 16):
+       ++last_chunk_; allocate new chunk if nullptr
+       last_index_ = 0; construct; ++last_index_
+```
+
+```
+   before:  chunk N: [e0][e1]...[e15]  (full)
+   after:   chunk N+1: [new][ ][ ]...   last_index_ = 1
+```
+
+### 4.3 `push_front` — prepend at the head
+
+Mirror of `push_back`. When `first_index_ == 0`, step to the previous map slot
+(maybe allocate a chunk), set `first_index_ = CHUNK_SIZE`, then decrement and
+construct.
+
+```
+   before:  first_index_=0 at chunk boundary
+   after:   new chunk to the left: [X][?][?]...
+            first_index_ points at X
+```
+
+### 4.4 Random access — `operator[](pos)`
+
+```
+   absolute = first_index_ + pos
+   chunk    = first_chunk_ + absolute / CHUNK_SIZE
+   index    = absolute % CHUNK_SIZE
+   return map_[chunk][index];
+```
+
+Two integer divisions per access — constant time, but slower in practice than
+vector's single pointer add due to chunk hopping and cache misses.
+
+### 4.5 Map reallocation (`reallocate_map`)
+
+When `first_chunk_ == 0` with no room (or symmetrically at the back), the map
+doubles and existing chunk pointers copy to the **center** of the new array:
+
+```
+   old:  [∅][C0][C1][∅]           first_chunk_ = 1
+   new:  [∅][∅][∅][C0][C1][∅][∅][∅] first_chunk_ = 3
+```
+
+Chunk memory is untouched — only pointer table moves.
+
+### 4.6 `pop_front` / `pop_back`
+
+Destroy the end element, advance `first_index_` or retreat `last_index_`. When
+an index walks off the chunk edge, move to the adjacent chunk.
+
+---
+
+## 5. API Reference
+
+### Construction
+| Call | Effect |
+|---|---|
+| `Deque<T>()` | empty deque, one centered chunk |
+| `Deque<T>(n)` | `n` default-constructed elements |
+| `Deque<T>(n, v)` | `n` copies of `v` |
+| `Deque<T>{a, b, c}` | initializer list |
+| copy / move ctor | deep copy / O(1) steal map + chunks |
+
+### Element access
+| Call | Bounds-checked? | Notes |
+|---|---|---|
+| `operator[](i)` | ❌ | O(1) chunk arithmetic |
+| `at(i)` | ✅ | throws `std::out_of_range` |
+| `front()` / `back()` | ❌ | direct chunk slot access |
+
+### Capacity
+`empty()`, `size()`, `max_size()`
+
+### Modifiers
+`push_front`, `push_back`, `emplace_front`, `emplace_back`, `pop_front`,
+`pop_back`, `resize`, `clear`, `swap`
+
+### Iterators
+`begin/end`, `cbegin/cend` — random-access iterators (delegate to `operator[]`)
+
+### Non-member
+`==`, `!=`, `<`, `<=`, `>`, `>=` (lexicographic), and a free `swap`.
+
+---
+
+## 6. Complexity Summary
+
+| Operation | Complexity | Note |
+|---|---|---|
+| `operator[]`, `at`, `front`, `back` | O(1) | two div/mod per `[]` |
+| `push_front`, `push_back` | O(1) amortized | O(n) when map reallocates |
+| `pop_front`, `pop_back` | O(1) | |
+| `resize` (grow/shrink) | O(n) | repeated push/pop |
+| `clear` | O(n) | destroys all elements |
+| `swap` | O(1) | swaps internal pointers |
+| copy | O(n) | move is O(1) |
+
+---
+
+## 7. Usage
 
 ```cpp
 #include "deque/deque.hpp"
 
-// Create and populate deque
-Deque<int> numbers = {1, 2, 3, 4, 5};
+Deque<int> dq = {1, 2, 3};
 
-// Add to both ends
-numbers.push_back(6);     // Add to back
-numbers.push_front(0);    // Add to front
+dq.push_front(0);     // {0, 1, 2, 3}
+dq.push_back(4);      // {0, 1, 2, 3, 4}
 
-// Access elements
-int first = numbers.front();
-int last = numbers.back();
-int middle = numbers[3];
+int x = dq[2];        // 2 — random access
+int safe = dq.at(2);  // bounds-checked
 
-// Remove from both ends
-numbers.pop_front();
-numbers.pop_back();
+dq.pop_front();
+dq.pop_back();
 
-// Iterate
-for (int n : numbers) {
-    std::cout << n << " ";
-}
+for (int n : dq) std::cout << n << ' ';
 ```
 
-## Construction
+See [`deque_example.cpp`](deque_example.cpp) for queue/stack patterns, sliding
+windows, emplace, and alternating front/back growth.
 
-### Default Constructor
-```cpp
-Deque<int> dq;  // Empty deque
-```
-- Size: 0
-- No memory allocated except initial chunk map
+---
 
-### Size Constructor
-```cpp
-Deque<int> dq(10);  // 10 default-constructed elements
-```
-- Creates n default-constructed elements
-- Efficient for pre-sizing
+## 8. Design Decisions & Trade-offs
 
-### Size + Value Constructor
-```cpp
-Deque<int> dq(5, 42);  // {42, 42, 42, 42, 42}
-```
-- Creates n copies of value
-- Useful for initialization
+- **CHUNK_SIZE = 16.** Small enough to limit waste in partially filled chunks;
+  large enough to amortize map overhead. libstdc++ uses a platform-tuned size.
+- **Centered initial chunk.** Starting at `CHUNK_SIZE/2` delays the first
+  chunk-boundary allocation when growing in both directions.
+- **Map doubling with re-centering.** Leaves headroom at both ends; avoids
+  shifting all elements (there is no single block to shift).
+- **No contiguity.** Iterators are random-access by logical index, but memory
+  is not one slab — `&dq[0]` and `&dq[1]` may not be adjacent.
+- **Stable element addresses.** Pointers/references to elements stay valid
+  across `push_front`/`push_back` (unlike vector reallocation).
 
-### Initializer List
-```cpp
-Deque<int> dq = {1, 2, 3, 4, 5};
-```
-- Convenient syntax for literals
-- Elements added in order
+---
 
-### Copy Constructor
-```cpp
-Deque<int> dq2(dq1);  // Deep copy
-```
-- Creates independent copy
-- O(n) time complexity
+## 9. Common Pitfalls
 
-### Move Constructor
-```cpp
-Deque<int> dq2(std::move(dq1));  // Steals resources
-```
-- O(1) time complexity
-- Original deque becomes empty
+- **Not contiguous — don't pass to C APIs expecting one block.** Use vector or
+  copy to a contiguous buffer for `data()`-style interop.
+- **Worse cache locality than vector.** Looping a large deque hits disjoint
+  chunks; vector is faster for pure sequential scans.
+- **`operator[]` has no bounds check.** Use `at()` on untrusted indices.
+- **Chunks are not freed on `pop_*`.** `clear()` destroys elements but leaves
+  chunk allocations in place (similar to vector's `clear` keeping capacity).
+- **Iterator invalidation is limited but not absent.** This implementation does
+  not insert in the middle; if you extended it, iterators could still invalidate
+  on map reallocation in some designs.
 
-## Architecture
+---
 
-### Chunk-Based Storage
+## 10. Comparison with `std::deque`
 
-```
-Map (Array of Chunk Pointers):
-┌────┬────┬────┬────┬────┬────┬────┐
-│ ∅  │ ∅  │ C0 │ C1 │ C2 │ ∅  │ ∅  │
-└────┴────┴────┴────┴────┴────┴────┘
-           ↓    ↓    ↓
-        Chunk  Chunk  Chunk
-        (16 T) (16 T) (16 T)
-        
-Elements stored in chunks of CHUNK_SIZE (16)
-Map grows when needed (no element reallocation)
-```
+**Same:** chunk/map architecture concept, O(1) both ends, O(1) random access,
+no relocation of existing elements.
 
-### Memory Layout
-- **Map**: Array of pointers to chunks
-- **Chunks**: Fixed-size arrays (16 elements each)
-- **No Reallocation**: Existing elements never move
-- **Growth**: Add new chunks as needed
+**Intentionally omitted for clarity:** custom allocators, `shrink_to_fit`,
+middle `insert`/`erase`, reverse iterators.
 
-## Element Access
+**Differs:** fixed `CHUNK_SIZE = 16`; simplified map growth; iterators store a
+logical index rather than a `(chunk, offset)` pair.
 
-### Subscript Operator []
-```cpp
-int x = dq[2];     // No bounds checking
-dq[0] = 100;       // Direct access
-```
-- **Fast**: Calculated access to correct chunk
-- **Unsafe**: No bounds checking
-- Use when index is guaranteed valid
+---
 
-### at() Method
-```cpp
-try {
-    int x = dq.at(100);  // Throws if out of range
-} catch (const std::out_of_range& e) {
-    // Handle error
-}
-```
-- **Safe**: Throws on invalid index
-- **Slower**: Has bounds check
-- Use when safety matters
-
-### Front and Back
-```cpp
-int first = dq.front();
-int last = dq.back();
-
-dq.front() = 10;
-dq.back() = 20;
-```
-- Access first/last element
-- O(1) performance
-- Undefined if deque is empty
-
-## Double-Ended Operations
-
-### Push Operations
-```cpp
-dq.push_front(1);              // Add to front - O(1)
-dq.push_back(2);               // Add to back - O(1)
-dq.push_front(std::move(obj)); // Move version
-```
-- Both ends are O(1)
-- No reallocation of existing elements
-- New chunks allocated only when needed
-
-### Pop Operations
-```cpp
-dq.pop_front();  // Remove from front - O(1)
-dq.pop_back();   // Remove from back - O(1)
-```
-- Both ends are O(1)
-- Elements properly destroyed
-- No automatic shrinking
-
-### Emplace Operations
-```cpp
-dq.emplace_front(args...);  // Construct in-place at front
-dq.emplace_back(args...);   // Construct in-place at back
-```
-- Constructs element directly
-- Avoids temporary objects
-- More efficient than push
-
-## Capacity Management
-
-### Size vs Chunks
-
-```cpp
-Deque<int> dq;
-dq.push_back(1);   // May allocate chunk
-dq.push_back(2);   // Uses existing chunk
-```
-
-- **Size**: Number of elements
-- **Chunks**: Allocated in blocks of 16
-- No "capacity" concept (unlike vector)
-
-### empty() and size()
-```cpp
-if (dq.empty()) {
-    // Deque is empty
-}
-
-size_t count = dq.size();  // Current element count
-```
-
-## Modifiers
-
-### resize()
-```cpp
-dq.resize(10);      // Resize to 10, default-construct new elements
-dq.resize(20, 99);  // Resize to 20, fill new elements with 99
-```
-- Grows or shrinks to specified size
-- Can add at either end
-- O(n) where n is the change in size
-
-### clear()
-```cpp
-dq.clear();  // Remove all elements
-```
-- Destroys all elements
-- Size becomes 0
-- Chunks remain allocated
-
-### swap()
-```cpp
-dq1.swap(dq2);  // Swap contents
-```
-- Exchanges contents
-- O(1) - just swaps internal pointers
-- No element copies
-
-## Iterators
-
-### Basic Iteration
-```cpp
-// Forward iteration
-for (auto it = dq.begin(); it != dq.end(); ++it) {
-    std::cout << *it << " ";
-}
-
-// Range-based for
-for (int x : dq) {
-    std::cout << x << " ";
-}
-
-// Modify via iterator
-for (int& x : dq) {
-    x *= 2;
-}
-```
-
-### Random Access
-```cpp
-auto it = dq.begin();
-it += 5;                    // Jump forward 5 positions
-auto mid = dq.begin() + dq.size() / 2;  // Middle element
-```
-
-### Iterator Arithmetic
-```cpp
-auto it1 = dq.begin();
-auto it2 = dq.end();
-auto distance = it2 - it1;  // Number of elements
-```
-
-## Comparisons
-
-### Equality
-```cpp
-Deque<int> dq1 = {1, 2, 3};
-Deque<int> dq2 = {1, 2, 3};
-Deque<int> dq3 = {1, 2, 4};
-
-bool b1 = (dq1 == dq2);  // true
-bool b2 = (dq1 != dq3);  // true
-```
-- Element-wise comparison
-- Must have same size and elements
-
-### Relational
-```cpp
-bool b1 = (dq1 < dq3);   // Lexicographic comparison
-bool b2 = (dq1 <= dq2);
-bool b3 = (dq3 > dq1);
-bool b4 = (dq2 >= dq1);
-```
-- Lexicographic ordering
-- Like string comparison
-
-## Performance Characteristics
-
-| Operation | Complexity | Notes |
-|-----------|------------|-------|
-| Construction | O(n) | Where n is initial size |
-| Element access [] | O(1) | Simple calculation |
-| push_front | O(1) | May allocate chunk |
-| push_back | O(1) | May allocate chunk |
-| pop_front | O(1) | |
-| pop_back | O(1) | |
-| insert at middle | O(n) | Must shift elements |
-| erase | O(n) | Must shift elements |
-| resize | O(n) | If changing size |
-| clear | O(n) | Must destroy elements |
-| swap | O(1) | Just swaps pointers |
-
-## Common Patterns
-
-### Queue (FIFO)
-```cpp
-Deque<Task> queue;
-
-// Enqueue
-queue.push_back(task);
-
-// Dequeue
-Task t = queue.front();
-queue.pop_front();
-```
-
-### Stack (LIFO)
-```cpp
-Deque<int> stack;
-
-// Push
-stack.push_back(item);
-
-// Pop
-int item = stack.back();
-stack.pop_back();
-```
-
-### Sliding Window
-```cpp
-Deque<int> window;
-const int WINDOW_SIZE = 3;
-
-for (int x : data) {
-    window.push_back(x);
-    
-    if (window.size() > WINDOW_SIZE) {
-        window.pop_front();
-    }
-    
-    // Process current window
-}
-```
-
-### Double-Ended Buffer
-```cpp
-Deque<Event> buffer;
-
-// Add to appropriate end based on priority
-if (high_priority) {
-    buffer.push_front(event);
-} else {
-    buffer.push_back(event);
-}
-```
-
-## Comparison with Vector
-
-### Deque Advantages
-- ✅ O(1) insertion/deletion at front
-- ✅ No reallocation of existing elements
-- ✅ Better for large objects (no copies during growth)
-- ✅ Good for queue/buffer use cases
-
-### Vector Advantages
-- ✅ Contiguous memory (better cache locality)
-- ✅ Smaller memory footprint
-- ✅ Simpler implementation
-- ✅ Slightly faster random access
-
-### When to Use Deque
-- Need frequent front insertions/deletions
-- Want to avoid reallocation overhead
-- Implementing queue or double-ended buffer
-- Large objects that are expensive to move
-
-### When to Use Vector
-- Only need back operations
-- Want maximum cache efficiency
-- Small to medium sized containers
-- Random access is critical
-
-## Memory Management
-
-### Chunk Allocation
-```cpp
-// Chunks allocated as needed
-Deque<int> dq;
-// Map allocated, one chunk created
-
-dq.push_back(1);  // Uses existing chunk
-// ... (15 more push_back calls)
-dq.push_back(17); // Allocates new chunk
-```
-
-### No Reallocation
-```cpp
-Deque<int> dq;
-dq.push_back(1);
-int* ptr = &dq[0];  // Get pointer to element
-
-dq.push_back(2);
-dq.push_back(3);
-// ptr still valid! Elements never move
-```
-
-## Exception Safety
-
-### Strong Guarantee
-Most operations provide strong exception guarantee:
-- If exception thrown, deque unchanged
-- Examples: push_back, push_front, insert
-
-### Basic Guarantee
-Some operations provide basic guarantee:
-- Deque valid but state may change
-- Example: some complex operations
-
-### No-throw Guarantee
-Some operations never throw:
-- swap, move constructor, move assignment (if T's move doesn't throw)
-
-## Best Practices
-
-### ✅ Do
-- Use deque for double-ended operations
-- Prefer emplace_back/emplace_front for efficiency
-- Use move semantics for large objects
-- Pass by const reference when not transferring ownership
-
-### ❌ Don't
-- Don't use deque if you only need back operations (use vector)
-- Don't assume contiguous memory
-- Don't manually manage memory (RAII handles it)
-- Don't hold pointers to elements across insertions at opposite end
-
-## Thread Safety
-
-### ❌ Not Thread-Safe
-- Concurrent modifications are unsafe
-- Concurrent reads are safe
-- Use external synchronization
-
-```cpp
-// UNSAFE
-thread1: dq.push_back(1);
-thread2: dq.push_front(2);
-
-// SAFE
-thread1: int x = dq[0];
-thread2: int y = dq[1];
-```
-
-## Use Cases
-
-### 1. Task Queue
-```cpp
-Deque<Task> tasks;
-tasks.push_back(normal_task);      // Regular priority
-tasks.push_front(urgent_task);     // High priority
-```
-
-### 2. Undo/Redo Buffer
-```cpp
-Deque<Action> history;
-history.push_back(action);         // Add action
-Action last = history.back();      // Undo
-history.pop_back();
-```
-
-### 3. Sliding Window Algorithm
-```cpp
-Deque<int> window;
-for (int x : stream) {
-    window.push_back(x);
-    if (window.size() > K) {
-        window.pop_front();
-    }
-    // Process window
-}
-```
-
-### 4. BFS Queue
-```cpp
-Deque<Node*> queue;
-queue.push_back(root);
-
-while (!queue.empty()) {
-    Node* node = queue.front();
-    queue.pop_front();
-    
-    // Add children to back
-    for (auto child : node->children) {
-        queue.push_back(child);
-    }
-}
-```
-
-## Files
-
-- **deque.hpp**: Implementation (header-only)
-- **deque_example.cpp**: 15 comprehensive examples
-- **deque_test.cpp**: Unit tests
-
-## See Also
-
-- **Vector**: For single-ended dynamic array
-- **unique_ptr**: For single object ownership
-- **shared_ptr**: For shared ownership
-- **String**: For string handling
-
-## Build and Run
+## 11. Build & Run
 
 ```bash
-# Build examples
-make run-deque
-
-# Run tests
-make test-deque
-
-# Build everything
-make all
+make run-deque       # build + run the examples
+make test-deque      # build + run the unit tests
+make all             # build everything in the repo
 ```
 
 ---
 
-**Implementation Status**: ✅ Complete with chunk-based architecture
-**Performance**: O(1) operations at both ends, O(1) random access
-**Memory**: Efficient chunk allocation, no element reallocation
+## 12. See Also
 
+- [`vector`](../vector/README.md) — contiguous dynamic array, O(1) back only
+- [`list`](../list/README.md) — linked nodes, O(1) splice, no random access
+- [`array`](../array/README.md) — fixed-size stack array
+- [`string`](../string/README.md) — specialized char sequence with SSO

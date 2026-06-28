@@ -1,559 +1,332 @@
-# Locks - Thread Synchronization Primitives
-
-A comprehensive implementation of **5 lock types** for thread synchronization, demonstrating various locking strategies from spinlocks to lock-free data structures.
-
-## 📋 Overview
-
-Proper synchronization is critical for concurrent programming. This implementation provides multiple lock types, each optimized for different scenarios:
-
-- **MutexLock**: Fast spinlock for short critical sections
-- **PointerLock**: Lock-free atomic pointer with ABA protection
-- **ReadWriteLock**: Multiple readers OR single writer
-- **RecursiveRWLock**: Reentrant read-write lock
-- **RecursiveRWPointerLock**: Recursive RW lock with pointer protection
-
-## 🎯 Lock Types
-
-### 1. Mutex Lock (Spinlock)
-**Strategy**: Spin on atomic flag  
-**Complexity**: O(1) lock/unlock  
-**Use Case**: Short critical sections, low contention
-
-**Characteristics:**
-- ✅ Ultra-fast: 15x faster than `std::mutex`!
-- ✅ No system calls (pure userspace)
-- ✅ RAII guard support
-- ❌ Busy-waiting (wastes CPU on contention)
-- ❌ Not fair (no queue)
-
-### 2. Pointer Lock (Lock-free)
-**Strategy**: Atomic CAS with version counter  
-**Complexity**: O(1) operations  
-**Use Case**: Lock-free data structures, concurrent stacks/queues
-
-**Characteristics:**
-- ✅ Lock-free (no blocking)
-- ✅ ABA problem prevention via versioning
-- ✅ Compare-and-swap operations
-- ✅ Progress guarantee
-- ❌ Retry loops under contention
-
-### 3. Read-Write Lock
-**Strategy**: Atomic counter + condition variable  
-**Complexity**: O(1) lock/unlock  
-**Use Case**: Read-heavy workloads, shared data structures
-
-**Characteristics:**
-- ✅ Multiple concurrent readers
-- ✅ Exclusive writer
-- ✅ Read/write guards (RAII)
-- ✅ try_lock support
-- ❌ Writer starvation possible
-
-### 4. Recursive RW Lock
-**Strategy**: Per-thread counters  
-**Complexity**: O(1) lock/unlock  
-**Use Case**: Nested function calls, reentrant code
-
-**Characteristics:**
-- ✅ Same thread can acquire multiple times
-- ✅ Separate read/write counts
-- ✅ Writer can acquire read lock
-- ✅ Natural for recursive algorithms
-- ❌ Slightly higher overhead
-
-### 5. Recursive RW Pointer Lock
-**Strategy**: Recursive RW lock + pointer protection  
-**Complexity**: O(1) operations  
-**Use Case**: Protected shared pointers, safe pointer updates
-
-**Characteristics:**
-- ✅ Combines recursive locking + pointer safety
-- ✅ Version tracking for changes
-- ✅ Read/write access objects (RAII)
-- ✅ Safe concurrent pointer updates
-- ❌ Higher memory overhead
-
-## 🏗️ Implementation Details
-
-### Mutex Lock (Spinlock)
-```cpp
-class MutexLock {
-    std::atomic_flag flag_ = ATOMIC_FLAG_INIT;
-    
-public:
-    void lock() {
-        while (flag_.test_and_set(std::memory_order_acquire)) {
-            std::this_thread::yield();  // Backoff
-        }
-    }
-    
-    void unlock() {
-        flag_.clear(std::memory_order_release);
-    }
-};
-```
-
-**Algorithm:**
-1. Test-and-set atomic flag
-2. Spin if already set
-3. Yield to avoid busy-wait
-4. Clear flag on unlock
-
-### Pointer Lock
-```cpp
-template<typename T>
-class PointerLock {
-    std::atomic<T*> ptr_;
-    std::atomic<uint64_t> version_;  // ABA protection
-    
-public:
-    bool compare_exchange_weak(T*& expected, T* desired) {
-        if (ptr_.compare_exchange_weak(expected, desired, ...)) {
-            version_.fetch_add(1);  // Increment on change
-            return true;
-        }
-        return false;
-    }
-};
-```
-
-**ABA Prevention:**
-- Version counter increments on every pointer change
-- Even if pointer returns to same value, version differs
-- Prevents ABA problem in lock-free algorithms
-
-### Read-Write Lock
-```cpp
-class ReadWriteLock {
-    std::atomic<int32_t> readers_;  // Count of readers (negative = writer)
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    
-public:
-    void lock_read() {
-        // Wait until no writer
-        cv_.wait(lock, [this] { return readers_.load() >= 0; });
-        readers_.fetch_add(1);
-    }
-    
-    void lock_write() {
-        // Wait until no readers/writers
-        cv_.wait(lock, [this] { return readers_.load() == 0; });
-        readers_.store(WRITER_FLAG);
-    }
-};
-```
-
-**States:**
-- `readers_ >= 0`: Number of active readers
-- `readers_ < 0`: Writer active
-- Condition variable for waiting
-
-## 🚀 Usage Examples
-
-### Mutex Lock - Counter Protection
-```cpp
-MutexLock mutex;
-int counter = 0;
-
-void increment() {
-    MutexLock::Guard guard(mutex);  // RAII
-    counter++;
-}  // Automatic unlock
-```
-
-### Pointer Lock - Lock-free Stack
-```cpp
-PointerLock<Node> head;
-
-void push(Node* node) {
-    Node* old_head;
-    do {
-        old_head = head.load();
-        node->next = old_head;
-    } while (!head.compare_exchange_weak(old_head, node));
-}
-
-Node* pop() {
-    Node* old_head;
-    Node* new_head;
-    do {
-        old_head = head.load();
-        if (!old_head) return nullptr;
-        new_head = old_head->next;
-    } while (!head.compare_exchange_weak(old_head, new_head));
-    return old_head;
-}
-```
-
-### Read-Write Lock - Database
-```cpp
-ReadWriteLock rwlock;
-Database db;
-
-void read_query() {
-    ReadWriteLock::ReadGuard guard(rwlock);
-    db.query();  // Multiple readers OK
-}
-
-void write_update() {
-    ReadWriteLock::WriteGuard guard(rwlock);
-    db.update();  // Exclusive access
-}
-```
-
-### Recursive RW Lock - Nested Calls
-```cpp
-RecursiveRWLock rwlock;
-
-void outer_function() {
-    RecursiveRWLock::WriteGuard guard(rwlock);
-    inner_function();  // Can acquire again!
-}
-
-void inner_function() {
-    RecursiveRWLock::WriteGuard guard(rwlock);  // Recursive!
-    // Do work...
-}
-```
-
-### Recursive RW Pointer Lock - Safe Pointer
-```cpp
-RecursiveRWPointerLock<Account> account(new Account());
-
-void read_balance() {
-    auto read = account.read();
-    std::cout << read->balance;  // Safe concurrent read
-}
-
-void deposit(double amount) {
-    auto write = account.write();
-    write->balance += amount;  // Exclusive write
-}
-
-void swap_account(Account* new_account) {
-    auto write = account.write();
-    delete write.get();
-    write.set(new_account);  // Safe pointer swap
-}
-```
-
-## 📊 Performance Comparison
-
-From `locks_example.cpp` (40,000 operations):
-
-| Lock Type | Time | Ops/sec | Notes |
-|-----------|------|---------|-------|
-| **MutexLock** | 212 μs | 188M ops/sec | 15.7x faster! |
-| **std::mutex** | 3277 μs | 12M ops/sec | Baseline |
-
-**Why is MutexLock faster?**
-- No system calls (pure userspace)
-- No kernel scheduler involvement
-- Optimized for low contention
-- Direct atomic operations
-
-## 🔍 When to Use Each
-
-### Use MutexLock When:
-- ✅ Critical section is very short
-- ✅ Low contention expected
-- ✅ Need maximum performance
-- ✅ Can tolerate CPU spinning
-
-### Use PointerLock When:
-- ✅ Building lock-free structures
-- ✅ Need wait-free progress
-- ✅ Pointer updates only
-- ✅ Can handle retry loops
-
-### Use ReadWriteLock When:
-- ✅ Read-heavy workload
-- ✅ Many concurrent readers
-- ✅ Infrequent writes
-- ✅ Shared data access
-
-### Use RecursiveRWLock When:
-- ✅ Nested function calls
-- ✅ Reentrant code needed
-- ✅ Same thread re-acquires
-- ✅ Complex call graphs
-
-### Use RecursiveRWPointerLock When:
-- ✅ Protected shared pointer
-- ✅ Need recursive access
-- ✅ Track pointer changes
-- ✅ Safe concurrent updates
-
-## 💡 Best Practices
-
-### 1. Always Use RAII Guards
-```cpp
-// ✅ GOOD: Automatic unlock
-{
-    MutexLock::Guard guard(mutex);
-    // Critical section
-}  // Automatic unlock
-
-// ❌ BAD: Manual unlock (error-prone)
-mutex.lock();
-// What if exception here?
-mutex.unlock();  // Might not execute!
-```
-
-### 2. Keep Critical Sections Short
-```cpp
-// ✅ GOOD: Minimal lock scope
-{
-    MutexLock::Guard guard(mutex);
-    counter++;  // Fast operation
-}
-
-// ❌ BAD: Long critical section
-{
-    MutexLock::Guard guard(mutex);
-    expensive_computation();  // Holds lock too long!
-    counter++;
-}
-```
-
-### 3. Prefer Read Locks for Queries
-```cpp
-// ✅ GOOD: Use read lock
-void get_balance() {
-    ReadWriteLock::ReadGuard guard(rwlock);
-    return balance;  // Many threads can read
-}
-
-// ❌ OVERKILL: Write lock for read
-void get_balance() {
-    ReadWriteLock::WriteGuard guard(rwlock);
-    return balance;  // Blocks other readers!
-}
-```
-
-### 4. Avoid Lock Inversion
-```cpp
-// ❌ DEADLOCK: Different order
-Thread 1: lock(A); lock(B);
-Thread 2: lock(B); lock(A);  // DEADLOCK!
-
-// ✅ SAFE: Same order
-Thread 1: lock(A); lock(B);
-Thread 2: lock(A); lock(B);  // No deadlock
-```
-
-### 5. Use try_lock for Non-blocking
-```cpp
-if (mutex.try_lock()) {
-    // Got lock
-    do_work();
-    mutex.unlock();
-} else {
-    // Couldn't get lock, do something else
-    fallback_action();
-}
-```
-
-## 🎓 Advanced Topics
-
-### Spinlock vs Mutex Trade-offs
-
-**Spinlock (MutexLock):**
-- Fast for short locks (< 100 cycles)
-- Wastes CPU under contention
-- Best on multi-core systems
-- No priority inversion
-
-**Mutex (std::mutex):**
-- Better for long locks
-- Sleeps thread (saves CPU)
-- Kernel involvement (slow)
-- Priority inheritance
-
-### Lock-free vs Wait-free
-
-**Lock-free (PointerLock):**
-- At least one thread makes progress
-- May have retry loops
-- Bounded by system scheduler
-
-**Wait-free:**
-- Every thread makes progress
-- No retry loops
-- Hard to implement correctly
-
-### Reader-Writer Fairness
-
-**Reader-preference** (current):
-- Readers can starve writers
-- Good for read-heavy workloads
-
-**Writer-preference:**
-- Writers get priority
-- Prevents writer starvation
-
-**Fair:**
-- FIFO queue for both
-- More complex implementation
-
-## 🐛 Common Pitfalls
-
-### 1. Forgetting to Unlock
-```cpp
-// ❌ BAD: Manual unlock
-mutex.lock();
-if (error) return;  // LEAKED LOCK!
-mutex.unlock();
-
-// ✅ GOOD: RAII guard
-{
-    MutexLock::Guard guard(mutex);
-    if (error) return;  // Guard unlocks automatically
-}
-```
-
-### 2. Holding Lock Too Long
-```cpp
-// ❌ BAD: I/O under lock
-{
-    MutexLock::Guard guard(mutex);
-    file.write(data);  // Slow I/O!
-}
-
-// ✅ GOOD: Copy then release
-{
-    MutexLock::Guard guard(mutex);
-    local_copy = data;
-}
-file.write(local_copy);  // I/O without lock
-```
-
-### 3. ABA Problem Without Protection
-```cpp
-// ❌ BAD: No version tracking
-std::atomic<Node*> head;
-Node* old_head = head.load();
-// ... other thread: pop A, push B, push A (same pointer!)
-head.compare_exchange_strong(old_head, new_head);  // Succeeds but wrong!
-
-// ✅ GOOD: Use PointerLock with versioning
-PointerLock<Node> head;  // Tracks versions
-```
-
-## 📈 Real-World Applications
-
-### Web Server Request Handling
-```cpp
-ReadWriteLock config_lock;
-ServerConfig config;
-
-void handle_request(Request req) {
-    ReadWriteLock::ReadGuard guard(config_lock);
-    // Many threads read config simultaneously
-    process_with_config(req, config);
-}
-
-void update_config(ServerConfig new_config) {
-    ReadWriteLock::WriteGuard guard(config_lock);
-    // Exclusive access for updates
-    config = new_config;
-}
-```
-
-### Cache with Lock-free Updates
-```cpp
-PointerLock<CacheNode> cache_head;
-
-CacheNode* lookup(Key key) {
-    CacheNode* node = cache_head.load();
-    while (node && node->key != key) {
-        node = node->next;
-    }
-    return node;
-}
-```
-
-### Game Engine Entity System
-```cpp
-RecursiveRWLock entity_lock;
-
-void update_entity(Entity& e) {
-    RecursiveRWLock::WriteGuard guard(entity_lock);
-    e.position += e.velocity;
-    if (e.has_children()) {
-        update_children(e);  // Recursive, re-acquires lock!
-    }
-}
-```
-
-## 🔗 API Reference
-
-### MutexLock
-| Method | Description | Time |
-|--------|-------------|------|
-| `lock()` | Acquire lock (spin) | O(1) |
-| `try_lock()` | Try acquire (non-blocking) | O(1) |
-| `unlock()` | Release lock | O(1) |
-| `Guard(lock)` | RAII lock guard | O(1) |
-
-### PointerLock<T>
-| Method | Description | Time |
-|--------|-------------|------|
-| `load()` | Get pointer | O(1) |
-| `store(ptr)` | Set pointer | O(1) |
-| `compare_exchange_weak()` | CAS operation | O(1) |
-| `version()` | Get version number | O(1) |
-
-### ReadWriteLock
-| Method | Description | Time |
-|--------|-------------|------|
-| `lock_read()` | Acquire read lock | O(1) |
-| `unlock_read()` | Release read lock | O(1) |
-| `lock_write()` | Acquire write lock | O(1) |
-| `unlock_write()` | Release write lock | O(1) |
-| `ReadGuard(lock)` | RAII read guard | O(1) |
-| `WriteGuard(lock)` | RAII write guard | O(1) |
-
-### RecursiveRWLock
-| Method | Description | Time |
-|--------|-------------|------|
-| `lock_read()` | Acquire read (reentrant) | O(1) |
-| `unlock_read()` | Release read | O(1) |
-| `lock_write()` | Acquire write (reentrant) | O(1) |
-| `unlock_write()` | Release write | O(1) |
-
-### RecursiveRWPointerLock<T>
-| Method | Description | Time |
-|--------|-------------|------|
-| `read()` | Get read access object | O(1) |
-| `write()` | Get write access object | O(1) |
-| `version()` | Get version number | O(1) |
-
-## 🏃 Building and Running
-
-```bash
-# Compile examples
-g++ -std=c++14 -O2 -pthread locks/locks_example.cpp -o locks_example
-
-# Run examples
-./locks_example
-
-# Run tests
-g++ -std=c++14 -O2 -pthread tests/locks_test.cpp -o locks_test
-./locks_test
-```
-
-## 📖 See Also
-
-- **Allocator**: Memory allocation with thread safety
-- **Thread Pool**: Task-based parallelism with locks
-- **Atomic Operations**: Lock-free primitives
+# Locks — Thread Synchronization Primitives
+
+> Five hand-rolled locks from spinlocks to recursive reader/writer guards. Each
+> one shows the atomics, waiting, and RAII patterns behind `std::mutex` and
+> `std::shared_mutex` — spin for micro-critical sections, CAS pointers for
+> lock-free stacks, RW locks when reads dominate.
+
+This is a from-scratch reimplementation of common synchronization patterns built
+for learning. The header is [`locks.hpp`](locks.hpp), runnable examples are in
+[`locks_example.cpp`](locks_example.cpp), and the test suite is in
+[`../tests/locks_test.cpp`](../tests/locks_test.cpp).
 
 ---
 
-**Summary**: This implementation provides 5 production-ready lock types, each optimized for specific use cases. MutexLock is 15x faster than std::mutex for short critical sections, while RecursiveRWPointerLock provides the most sophisticated protection with reentrant locking and pointer versioning.
+## 1. What It Is
 
-**All 23 tests passing!**
+| Primitive | Exclusivity | Blocks? | Reentrant? | Best for |
+|---|---|---|---|---|
+| `MutexLock` | exclusive | spin + yield | ❌ | tiny critical sections |
+| `PointerLock<T>` | lock-free CAS | retry loops | N/A | lock-free stack head |
+| `ReadWriteLock` | shared read / exclusive write | condition_variable | ❌ | read-heavy caches |
+| `RecursiveRWLock` | RW + per-thread depth | condition_variable | ✅ | nested calls |
+| `RecursiveRWPointerLock<T>` | RW around `T*` | via recursive RW | ✅ | guarded shared pointer |
 
+**Reach for these types when** you want to see exactly how acquire/release,
+test-and-set, and reader counts work — not when you need production fairness or
+`std::shared_mutex` platform tuning.
+
+**Look elsewhere when** critical sections are long (prefer blocking `std::mutex`),
+fair scheduling matters, or you need standard Thread Sanitizer annotations.
+
+---
+
+## 2. Mental Model
+
+### Spinlock contention
+
+```
+   Thread A                         Thread B
+      │ lock(): TAS → OK               │ lock(): TAS → busy
+      │ [ counter++ ]                  │   yield → spin → retry
+      │ unlock(): clear                │
+      │                                │ lock(): TAS → OK
+```
+
+### Read-write lock
+
+```
+   readers_ >= 0  →  N readers in parallel
+   readers_ = WRITER_FLAG  →  one writer, everyone else waits on cv_
+```
+
+### RAII guard (all mutex-like types)
+
+```
+   { Guard g(lock);     // lock()
+       ...               // critical section
+   }                     // ~Guard → unlock()  even on throw
+```
+
+---
+
+## 3. Internal Representation
+
+### MutexLock
+
+```cpp
+std::atomic_flag flag_ = ATOMIC_FLAG_INIT;  // test_and_set / clear
+```
+
+### PointerLock\<T\>
+
+```cpp
+std::atomic<T*>      ptr_;
+std::atomic<uint64_t> version_;   // incremented on successful mutation
+```
+
+### ReadWriteLock
+
+```cpp
+std::atomic<int32_t> readers_;   // count, or WRITER_FLAG (-1000000)
+std::mutex           mutex_;     // for condition_variable
+std::condition_variable cv_;
+```
+
+### RecursiveRWLock
+
+```cpp
+std::mutex mutex_;
+std::condition_variable cv_;
+std::thread::id writer_id_;
+int32_t write_count_;
+int32_t reader_count_;
+std::unordered_map<std::thread::id, int32_t> read_counts_;
+```
+
+### RecursiveRWPointerLock\<T\>
+
+```cpp
+T* ptr_;                         // guarded data (lock_ required for access)
+RecursiveRWLock lock_;
+std::atomic<uint64_t> version_;
+```
+
+---
+
+## 4. How It Works (Step by Step)
+
+### 4.1 MutexLock — test-and-set spin loop
+
+```
+   lock():
+       while flag_.test_and_set(acquire):   // returns previous value
+           yield()                          // previous was SET → spin
+
+   unlock():
+       flag_.clear(release)                 // publish critical section end
+```
+
+`memory_order_acquire` on lock prevents reads in the critical section from
+hoisting before the lock. `release` on unlock prevents writes from leaking after.
+
+### 4.2 PointerLock — CAS push on a lock-free stack
+
+```
+   push(node):
+       loop:
+           old = head.load()
+           node->next = old
+           if CAS(head, old, node): version++; return
+           // else retry — another thread won the race
+```
+
+Version increments teach ABA detection; production code often packs pointer+tag
+in 128-bit CAS.
+
+### 4.3 ReadWriteLock — reader and writer paths
+
+**Reader:**
+
+```
+   unique_lock(mutex_)
+   wait until readers_ >= 0        // no active writer
+   readers_.fetch_add(1)
+```
+
+**Writer:**
+
+```
+   wait until readers_ == 0
+   readers_ = WRITER_FLAG
+```
+
+**Last reader unlock:**
+
+```
+   if fetch_sub(1) == 1: notify_all()   // wake blocked writer
+```
+
+### 4.4 RecursiveRWLock — nested acquire same thread
+
+```
+   Thread T already holds write (writer_id_=T, write_count_=2)
+   T calls lock_write() again → write_count_ becomes 3 (no wait)
+
+   Different thread U calls lock_write() → waits on cv_ until T drops to 0
+```
+
+### 4.5 RecursiveRWPointerLock — RAII read/write facades
+
+```
+   auto r = account.read();    // ReadGuard lives inside ReadAccess
+   double b = r->balance;      // shared with other readers
+
+   auto w = account.write();   // WriteGuard inside WriteAccess
+   w->deposit(10);
+   w.set(new_account);         // ptr swap + version++
+```
+
+---
+
+## 5. API Reference
+
+### MutexLock
+| Call | Effect |
+|---|---|
+| `lock()` | spin until acquired |
+| `try_lock()` | non-blocking attempt |
+| `unlock()` | release |
+| `Guard(m)` | RAII lock |
+
+### PointerLock\<T\>
+| Call | Effect |
+|---|---|
+| `load(order)` | atomic read of ptr_ |
+| `store(ptr)` | store + version++ |
+| `compare_exchange_weak/strong` | CAS + version on success |
+| `version()` | observation counter |
+
+### ReadWriteLock
+| Call | Effect |
+|---|---|
+| `lock_read` / `unlock_read` | shared access |
+| `lock_write` / `unlock_write` | exclusive access |
+| `try_lock_read/write` | non-blocking |
+| `ReadGuard` / `WriteGuard` | RAII |
+
+### RecursiveRWLock
+| Call | Effect |
+|---|---|
+| `lock_read` / `unlock_read` | reentrant shared |
+| `lock_write` / `unlock_write` | reentrant exclusive |
+| `ReadGuard` / `WriteGuard` | RAII |
+
+### RecursiveRWPointerLock\<T\>
+| Call | Effect |
+|---|---|
+| `read()` | `ReadAccess` with shared lock |
+| `write()` | `WriteAccess` with exclusive lock |
+| `version()` | pointer change generation |
+
+---
+
+## 6. Complexity Summary
+
+| Operation | MutexLock | PointerLock CAS | ReadWriteLock | RecursiveRWLock |
+|---|---|---|---|---|
+| uncontended lock | O(1) | O(1) | O(1) + possible wait | O(1) + map touch |
+| contended lock | O(spin) | O(retries) | O(park/wake) | O(park/wake) |
+| unlock | O(1) | N/A | O(1); maybe notify | O(1); maybe notify |
+
+---
+
+## 7. Usage
+
+```cpp
+#include "locks/locks.hpp"
+
+// Spinlock + RAII
+MutexLock m;
+int counter = 0;
+{
+    MutexLock::Guard g(m);
+    ++counter;
+}
+
+// Lock-free stack head
+PointerLock<Node> head;
+// ... CAS push/pop loop in example ...
+
+// Read-heavy config
+ReadWriteLock rw;
+{
+    ReadWriteLock::ReadGuard g(rw);
+    read_config();
+}
+{
+    ReadWriteLock::WriteGuard g(rw);
+    update_config();
+}
+
+// Nested recursive write
+RecursiveRWLock rr;
+RecursiveRWLock::WriteGuard outer(rr);
+RecursiveRWLock::WriteGuard inner(rr);  // same thread — OK
+```
+
+See [`locks_example.cpp`](locks_example.cpp) for counter stress tests, lock-free
+stack, database simulation, nested recursive locks, and `MutexLock` vs `std::mutex`
+timing.
+
+---
+
+## 8. Design Decisions & Trade-offs
+
+- **Spin + yield for MutexLock.** Fast when hold time is nanoseconds; wastes CPU
+  when contention is high or sections are long — use `std::mutex` then.
+- **Separate version atomics in PointerLock.** Simpler than 128-bit tagged pointers
+  on all platforms; not a complete hazard-pointer implementation.
+- **Writer sentinel in ReadWriteLock.** One atomic `readers_` field instead of
+  separate reader/writer flags; writers can starve under constant readers.
+- **RecursiveRWLock map.** Per-thread read depth costs heap lookups; fine for teaching,
+  heavy for millions of threads.
+- **RAII guards everywhere.** Mirrors `std::lock_guard` — unlock on every exit path.
+
+---
+
+## 9. Common Pitfalls
+
+- **Manual lock without RAII.** An early `return` or exception skips `unlock()` → deadlock.
+- **Long work under spinlock.** Holding `MutexLock` across I/O burns CPU for all waiters.
+- **Write lock for reads.** Blocks other readers unnecessarily — use `ReadGuard`.
+- **Lock ordering inversion.** Thread 1: `A` then `B`; Thread 2: `B` then `A` → deadlock.
+- **ABA without versioning.** Raw `atomic<T*>` CAS can succeed spuriously after complex
+  pop/push cycles — `PointerLock` increments `version_` on each change.
+
+---
+
+## 10. Comparison with `std::mutex` / `std::shared_mutex`
+
+**Same ideas:** mutual exclusion, shared/exclusive phases, RAII guards.
+
+**Intentionally different:** `MutexLock` spins instead of parking; `ReadWriteLock` uses
+a reader-preference policy without OS-specific rwlock; no `timed_mutex`, no `shared_lock`
+typedef aliases.
+
+**When std wins:** long critical sections, fairness, integration with `condition_variable`
+against standard mutex types, TSan annotations.
+
+---
+
+## 11. Build & Run
+
+```bash
+make run-locks          # build + run the examples
+make test-locks         # build + run the unit tests
+make all                # build everything in the repo
+```
+
+Manual compile from repo root:
+
+```bash
+g++ -std=c++14 -Wall -Wextra -Wpedantic -pthread -I. locks/locks_example.cpp -o /tmp/x_locks
+```
+
+---
+
+## 12. See Also
+
+- [`thread_pool`](../thread_pool/README.md) — mutex + condition_variable on task queue
+- [`arena_allocator`](../arena_allocator/README.md) — mutex on arena map
+- [`allocator`](../allocator/README.md) — single-thread allocators (no locks)

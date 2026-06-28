@@ -1,162 +1,94 @@
-# Test Suite
+# Tests
 
-Comprehensive test suite for the unique_ptr implementation.
+One self-contained test suite per component — 24 in total. Each file is an
+ordinary C++ program with a tiny inline harness (no external framework): it runs
+a series of numbered checks, prints `PASSED`/`FAILED` for each, and exits
+non-zero on the first failure so `make test` stops loudly.
 
-## Files
-
-- **`test_suite.cpp`** - Unit tests for unique_ptr
-
-## Running Tests
-
-```bash
-# From project root
-make test
-
-# Or directly
-cd .. && make test
-```
-
-## Test Coverage
-
-### Construction Tests (6 tests)
-- ✅ Default construction
-- ✅ Nullptr construction
-- ✅ Pointer construction
-- ✅ make_unique
-- ✅ Move construction
-- ✅ Copy operations (verify deleted)
-
-### Assignment Tests (4 tests)
-- ✅ Move assignment
-- ✅ Nullptr assignment
-- ✅ Self-move assignment
-- ✅ Copy assignment (verify deleted)
-
-### Modifier Tests (5 tests)
-- ✅ reset() - empty
-- ✅ reset() - with pointer
-- ✅ release()
-- ✅ swap()
-- ✅ Multiple resets
-
-### Observer Tests (5 tests)
-- ✅ get()
-- ✅ operator*
-- ✅ operator->
-- ✅ operator bool()
-- ✅ Null pointer checks
-
-### Array Tests (3 tests)
-- ✅ Array construction
-- ✅ make_unique_array()
-- ✅ operator[]
-
-### Custom Deleter Tests (1 test)
-- ✅ Custom deleter execution
-
-### Polymorphism Tests (2 tests)
-- ✅ Polymorphic deletion
-- ✅ Derived to base conversion
-
-### Comparison Tests (2 tests)
-- ✅ Nullptr comparison
-- ✅ Pointer comparison
-
-### Function Parameter Tests (3 tests)
-- ✅ Pass by value (take ownership)
-- ✅ Pass by const reference (borrow)
-- ✅ Pass by reference (modify)
-
-### Return Value Tests (1 test)
-- ✅ Return by value
-
-### Edge Case Tests (3 tests)
-- ✅ Multiple reset calls
-- ✅ Move from empty
-- ✅ Self-assignment handling
-
-## Test Statistics
-
-- **Total Tests**: 30+
-- **Lines of Code**: ~500
-- **Coverage**: Core functionality + edge cases
-- **Memory Leaks**: 0 (verified with valgrind)
-
-## Running with Memory Checker
+## Running
 
 ```bash
-# Valgrind (Linux/Mac)
-make valgrind-test
-
-# Address Sanitizer
-cd .. && g++ -fsanitize=address -g -I. tests/test_suite.cpp -o build/test_suite
-./build/test_suite
+make test            # build + run every suite (stops at first failure)
+make test-vector     # build + run a single suite (any module name)
+make test-set
+make build-tests     # just compile every suite into build/
 ```
 
-## Expected Output
+Every suite is also compiled in the default `make all`.
+
+## Layout
 
 ```
-========================================
-  unique_ptr Test Suite                
-========================================
-
-Running test: default_construction... PASSED
-Running test: nullptr_construction... PASSED
-Running test: pointer_construction... PASSED
-...
-[30+ tests]
-...
-
-========================================
-  All tests passed!                    
-========================================
-
-Final object count: 0 (should be 0)
+tests/
+└── <component>_test.cpp     # the suite for <component>/<component>.hpp
 ```
 
-## Adding New Tests
+Each suite `#include`s the header under test directly (the implementations are
+header-only) and is built with:
 
-1. Add test function:
-```cpp
-TEST(my_new_test) {
-    // Test code
-    ASSERT_TRUE(condition);
-}
+```
+g++ -std=c++14 -Wall -Wextra -Wpedantic -pthread -I. tests/<x>_test.cpp -o build/<x>_test
 ```
 
-2. Rebuild:
+## Coverage
+
+| Suite | Checks | Focus |
+|---|---|---|
+| `unique_ptr_test` | 30+ | move-only, reset/release, arrays, custom deleters, polymorphism |
+| `shared_ptr_test` | many | ref-counting, `weak_ptr`, cycles, aliasing, thread-safety |
+| `array_test` | 12 | fixed size, `fill`, bounds, iteration |
+| `vector_test` | 39 | growth, insert/erase, capacity, move, comparisons |
+| `string_test` | many | SSO, append/insert/replace, find, comparisons |
+| `deque_test` | 14 | both-end push/pop, **chunk growth (1000+)**, random access, resize, swap |
+| `list_test` | 15 | push/pop ends, iteration, copy |
+| `set_test` | 15 | ordered iteration, RB balancing, find/erase |
+| `map_test` | 13 | `operator[]`, `at` throw, insert pair, ordered iteration, **500-key stress** |
+| `multiset_test` | 12 | duplicate runs, `count`, erase-whole-run |
+| `multimap_test` | 10 | duplicate keys, key-ordered iteration, erase block |
+| `unordered_set_test` | 11 | insert/contains/erase, **rehash (1000)** |
+| `unordered_map_test` | 11 | `operator[]`, `at` throw, **rehash (1000)** |
+| `stack_test` | 15 | LIFO order, underflow safety |
+| `queue_test` | 15 | FIFO order |
+| `priority_queue_test` | 20 | heap order, sift up/down |
+| `pair_test` | 14 | construction, comparisons, `make_pair`, nesting |
+| `tuple_test` | 10 | `get<I>`, heterogeneous storage |
+| `optional_test` | 13 | engaged/disengaged, `value_or`, throw on empty |
+| `bitset_test` | 17 | set/reset/flip, bitwise ops, multi-word |
+| `allocator_test` | 18 | linear / pool / stack / free-list, coalescing |
+| `arena_allocator_test` | 45 | bump alloc, **alignment**, scoped reset, concurrency |
+| `locks_test` | 23 | spinlock, RAII guards, reader/writer |
+| `thread_pool_test` | 29 | submit/futures, parallel-for, shutdown |
+
+## Memory & UB checking
+
+The suites are clean under sanitizers; this is the recommended way to verify a
+change:
+
 ```bash
-make clean && make test
+# AddressSanitizer + UndefinedBehaviorSanitizer
+g++ -std=c++14 -g -fsanitize=address,undefined -pthread -I. tests/deque_test.cpp -o /tmp/t && /tmp/t
+
+# Valgrind (Linux)
+valgrind --leak-check=full ./build/vector_test
 ```
 
-## Test Macros
+> The stress tests in `deque_test`, `map_test`, and the `unordered_*` suites
+> exist specifically to exercise reallocation/rehashing paths under ASan — they
+> caught real bugs (a deque map-reallocation overflow, an `unordered_map`
+> dangling-reference-on-rehash, and an arena alignment defect) during the
+> revamp.
 
-- `TEST(name)` - Define a test
-- `ASSERT_TRUE(cond)` - Assert condition is true
-- `ASSERT_FALSE(cond)` - Assert condition is false
-- `ASSERT_EQ(a, b)` - Assert equality
-- `ASSERT_NE(a, b)` - Assert inequality
+## Adding a test
 
-## Debugging Failed Tests
+1. Open `tests/<component>_test.cpp`.
+2. Add a numbered block following the existing pattern:
+   ```cpp
+   std::cout << "Test N: what it checks... ";
+   { /* arrange + act */ if (!expected) { std::cout << "FAILED\n"; return 1; } }
+   std::cout << "PASSED\n"; ++passed;
+   ```
+3. Bump the `total` counter at the top.
+4. `make test-<component>`.
 
-If a test fails:
-1. Note the line number in error message
-2. Build with debug: `make debug`
-3. Run with debugger: `lldb build/test_suite`
-4. Set breakpoint: `b test_suite.cpp:LINE`
-5. Run: `run`
-
-## Future Test Ideas
-
-- [ ] Thread-safety tests (if applicable)
-- [ ] Performance benchmarks
-- [ ] Comparison with std::unique_ptr
-- [ ] More edge cases
-- [ ] Fuzzing tests
-
-## See Also
-
-- `../unique_ptr/unique_ptr.hpp` - Implementation being tested
-- `../unique_ptr/example.cpp` - Usage examples
-- `../docs/IMPLEMENTATION_NOTES.md` - Implementation details
-
+For a brand-new component, also add its name to `MODULES` in the root
+[`Makefile`](../Makefile) — it then gets `run-`/`test-` targets automatically.

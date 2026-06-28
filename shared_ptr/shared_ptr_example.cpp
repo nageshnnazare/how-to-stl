@@ -1,8 +1,24 @@
 /**
  * @file shared_ptr_example.cpp
- * @brief Comprehensive examples demonstrating the shared_ptr implementation
- * 
- * This file shows various use cases and features of the custom shared_ptr
+ * @brief Runnable tour of SharedPtr / WeakPtr — reference-counted shared ownership
+ *
+ * Sections demonstrate control-block semantics from shared_ptr/README.md:
+ *   1. Copy increases shared_count; inner scope decrement
+ *   2. makeShared factory
+ *   3. Move transfers one handle without changing total count
+ *   4. Vectors of SharedPtr (shared ownership across containers)
+ *   5. WeakPtr — no strong bump; lock() promotes; expired after last SharedPtr
+ *   6. Cyclic graph broken by WeakPtr parent edge
+ *   7. Polymorphic SharedPtr<Base>
+ *   8. dynamic_pointer_cast
+ *   9. By-value copy vs const-ref borrow in parameters
+ *  10. Return by value
+ *  11. Equality compares raw addresses
+ *  12. reset / unique()
+ *  13. Cache pattern — WeakPtr entries expire when objects die
+ *
+ * Build from repo root:
+ *   g++ -std=c++14 -Wall -Wextra -Wpedantic -I. shared_ptr/shared_ptr_example.cpp -o /tmp/x_shared_ptr
  */
 
 #include "shared_ptr/shared_ptr.hpp"
@@ -59,7 +75,7 @@ public:
     }
 };
 
-// Example classes for circular reference demonstration
+// Node graph for cycle demo: strong child_, weak parent_ breaks SharedPtr cycles
 class Node;
 
 class Node {
@@ -99,7 +115,7 @@ public:
 // ============================================================================
 
 /**
- * Example 1: Basic shared ownership
+ * Example 1: Copy shares cb_; shared_count tracks live SharedPtr handles.
  */
 void example1_shared_ownership() {
     std::cout << "\n=== Example 1: Shared Ownership ===\n";
@@ -126,7 +142,7 @@ void example1_shared_ownership() {
 }
 
 /**
- * Example 2: Using makeShared
+ * Example 2: makeShared — two allocations (object + control block) in this impl.
  */
 void example2_make_shared() {
     std::cout << "\n=== Example 2: Using makeShared ===\n";
@@ -137,7 +153,7 @@ void example2_make_shared() {
 }
 
 /**
- * Example 3: Move semantics
+ * Example 3: Move — ptr1 emptied; total use_count unchanged (seat moved, not copied).
  */
 void example3_move_semantics() {
     std::cout << "\n=== Example 3: Move Semantics ===\n";
@@ -155,7 +171,7 @@ void example3_move_semantics() {
 }
 
 /**
- * Example 4: Containers of shared_ptr
+ * Example 4: Container copy duplicates handles → same object, higher use_count.
  */
 void example4_containers() {
     std::cout << "\n=== Example 4: Containers ===\n";
@@ -183,7 +199,7 @@ void example4_containers() {
 }
 
 /**
- * Example 5: WeakPtr basics
+ * Example 5: WeakPtr observes via cb_; lock() CAS-increments shared_count if alive.
  */
 void example5_weak_ptr() {
     std::cout << "\n=== Example 5: WeakPtr Basics ===\n";
@@ -219,7 +235,7 @@ void example5_weak_ptr() {
 }
 
 /**
- * Example 6: Breaking circular references
+ * Example 6: Parent→child strong, child→parent weak — no reference cycle leak.
  */
 void example6_circular_reference() {
     std::cout << "\n=== Example 6: Breaking Circular References ===\n";
@@ -245,7 +261,7 @@ void example6_circular_reference() {
 }
 
 /**
- * Example 7: Polymorphism
+ * Example 7: SharedPtr<Base> from makeShared<Derived> — virtual dispatch preserved.
  */
 void example7_polymorphism() {
     std::cout << "\n=== Example 7: Polymorphism ===\n";
@@ -262,7 +278,7 @@ void example7_polymorphism() {
 }
 
 /**
- * Example 8: Dynamic cast
+ * Example 8: dynamic_pointer_cast shares cb_; empty SharedPtr on failed cast.
  */
 void example8_dynamic_cast() {
     std::cout << "\n=== Example 8: Dynamic Cast ===\n";
@@ -290,7 +306,7 @@ void example8_dynamic_cast() {
 }
 
 /**
- * Example 9: Function parameters
+ * Example 9: Pass-by-value copies handle (+1 count); const ref borrows (no bump).
  */
 void processShared(SharedPtr<Resource> ptr) {
     // Takes shared ownership
@@ -320,7 +336,7 @@ void example9_function_parameters() {
 }
 
 /**
- * Example 10: Return values
+ * Example 10: Return SharedPtr — ownership shared with caller (count ≥ 1).
  */
 SharedPtr<Resource> createResource(const std::string& name, int id) {
     return makeShared<Resource>(name, id);
@@ -335,7 +351,7 @@ void example10_return_values() {
 }
 
 /**
- * Example 11: Comparison operations
+ * Example 11: operator== compares get() addresses, not use_count.
  */
 void example11_comparisons() {
     std::cout << "\n=== Example 11: Comparisons ===\n";
@@ -359,7 +375,7 @@ void example11_comparisons() {
 }
 
 /**
- * Example 12: Reset and unique
+ * Example 12: reset drops this handle; unique() true only when use_count()==1.
  */
 void example12_reset_unique() {
     std::cout << "\n=== Example 12: Reset and Unique ===\n";
@@ -383,7 +399,7 @@ void example12_reset_unique() {
 }
 
 /**
- * Example 13: Cache with weak_ptr
+ * Example 13: Cache holds WeakPtr — entries expire when last SharedPtr dies.
  */
 void example13_cache_pattern() {
     std::cout << "\n=== Example 13: Cache Pattern with WeakPtr ===\n";
@@ -439,14 +455,14 @@ int main() {
         example3_move_semantics();
         example4_containers();
         example5_weak_ptr();
-        //example6_circular_reference();  // Skip for now
+        example6_circular_reference();
         example7_polymorphism();
-        //example8_dynamic_cast();  // Skip for now
+        example8_dynamic_cast();
         example9_function_parameters();
         example10_return_values();
         example11_comparisons();
         example12_reset_unique();
-        //example13_cache_pattern();  // Skip for now
+        example13_cache_pattern();
         
         std::cout << "\n=================================================\n";
         std::cout << "   All examples completed successfully!        \n";
@@ -460,3 +476,9 @@ int main() {
     return 0;
 }
 
+
+/* ===== EXPECTED OUTPUT (sample run) ============================================
+ * Auto-generated by running this program (see tests/README.md).
+ * ----------------------------------------------------------------------------
+
+ * ============================================================================ */
