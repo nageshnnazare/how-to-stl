@@ -19,6 +19,7 @@
 :root {
     --header-height: 56px;
     --sidebar-width: 280px;
+    /* Let the document fill the available width (no wasted screen real-estate). */
     --content-max: none;
 
     --font-sans: "Inter", -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -39,15 +40,21 @@
     --glass-tint: rgba(20,22,30,0.30);
     --glass-border: rgba(255,255,255,0.10);
     --glass-highlight: rgba(255,255,255,0.14);
-    --glass-sheen: rgba(255,255,255,0.07);
     --glass-shadow: 0 10px 30px rgba(0,0,0,0.45);
     --glass-blur: 22px;
-    /* Floating glass controls (dark) */
-    --ctrl-bg: rgba(255,255,255,0.07);
-    --ctrl-bg-hover: rgba(255,255,255,0.16);
-    --ctrl-border: rgba(255,255,255,0.16);
-    --ctrl-shadow: 0 2px 8px rgba(0,0,0,0.40), inset 0 1px 0 rgba(255,255,255,0.14);
-    --ctrl-shadow-hover: 0 6px 16px rgba(0,0,0,0.50), inset 0 1px 0 rgba(255,255,255,0.22);
+    /* Shared liquid-glass backdrop filter: moderate blur + saturation so the
+       page behind shows through (transparent), Apple-style, without a milky fill. */
+    --glass-filter: blur(18px) saturate(200%);
+    /* Floating glass controls (dark) -- transparent, the blur does the work. */
+    --ctrl-bg: rgba(255,255,255,0.04);
+    --ctrl-bg-hover: rgba(255,255,255,0.09);
+    --ctrl-border: rgba(255,255,255,0.12);
+    --ctrl-shadow: 0 4px 18px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.18);
+    --ctrl-shadow-hover: 0 8px 26px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.26);
+    /* Light-catching rim gradient: a single highlight on the top-left diagonal
+       edge that fades to nothing before reaching the opposite side -- the
+       asymmetric, Apple-style refractive glass edge. */
+    --glass-rim: linear-gradient(135deg, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0.08) 16%, rgba(255,255,255,0) 42%);
     --bg-sidebar: #0e1016;
     --bg-content: #0b0d12;
     --bg-code-block: #14161f;
@@ -110,15 +117,18 @@
     --glass-tint: rgba(255,255,255,0.35);
     --glass-border: rgba(255,255,255,0.65);
     --glass-highlight: rgba(255,255,255,0.85);
-    --glass-sheen: rgba(255,255,255,0.55);
     --glass-shadow: 0 10px 30px rgba(16,24,40,0.12);
     --glass-blur: 22px;
-    /* Floating glass controls (light) */
-    --ctrl-bg: rgba(255,255,255,0.6);
-    --ctrl-bg-hover: rgba(255,255,255,0.92);
-    --ctrl-border: rgba(16,24,40,0.10);
-    --ctrl-shadow: 0 2px 8px rgba(16,24,40,0.12), inset 0 1px 0 rgba(255,255,255,0.85);
-    --ctrl-shadow-hover: 0 6px 16px rgba(16,24,40,0.18), inset 0 1px 0 rgba(255,255,255,0.95);
+    --glass-filter: blur(18px) saturate(190%);
+    /* Floating glass controls (light) -- transparent, the blur does the work. */
+    --ctrl-bg: rgba(255,255,255,0.35);
+    --ctrl-bg-hover: rgba(255,255,255,0.55);
+    --ctrl-border: rgba(255,255,255,0.6);
+    --ctrl-shadow: 0 4px 18px rgba(16,24,40,0.10), inset 0 1px 0 rgba(255,255,255,0.8);
+    --ctrl-shadow-hover: 0 8px 26px rgba(16,24,40,0.16), inset 0 1px 0 rgba(255,255,255,0.95);
+    /* Light-catching rim gradient: brightest at the top-left/bottom-right
+       corners, dimmer along the edges -- a refractive glass edge. */
+    --glass-rim: linear-gradient(135deg, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.3) 16%, rgba(255,255,255,0) 42%);
     --bg-sidebar: #ffffff;
     --bg-content: #ffffff;
     --bg-code-block: #f4f5fa;
@@ -178,7 +188,14 @@ html {
     /* Honour the device safe-area (notch / home indicator) on iOS. */
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    /* Hide the browser's main page scrollbar (right + bottom) while keeping
+       the page fully scrollable. Per-component scrollbars (sidebars, code
+       blocks, tables) keep their own styled thin scrollbars. */
+    scrollbar-width: none;        /* Firefox */
+    -ms-overflow-style: none;     /* legacy Edge/IE */
 }
+html::-webkit-scrollbar,
+body::-webkit-scrollbar { width: 0; height: 0; display: none; }  /* WebKit/Blink */
 [data-theme="light"] { color-scheme: light; }
 
 body {
@@ -245,25 +262,46 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 700;
-    font-size: 14px;
+    /* Keep this perfectly in sync with .doc-select so the title looks identical
+       whether it is shown in the picker or floating in the condensed navbar. */
+    font-weight: 600;
+    font-size: 13px;
     letter-spacing: -0.01em;
     color: var(--text-primary);
     background: var(--ctrl-bg);
     border: 1px solid var(--ctrl-border);
     box-shadow: var(--ctrl-shadow);
-    -webkit-backdrop-filter: blur(10px);
-    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
     padding: 7px 18px;
     border-radius: 999px;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.28s ease, transform 0.28s ease;
+    transition: opacity 0.4s cubic-bezier(0.32,0.72,0,1), transform 0.4s cubic-bezier(0.32,0.72,0,1);
 }
 
 /* Smoothly fade/lift the menu items in and out as the bar condenses. */
 .brand-name, .doc-selector, .search-widget {
-    transition: opacity 0.25s ease, transform 0.25s ease;
+    transition: opacity 0.4s cubic-bezier(0.32,0.72,0,1), transform 0.4s cubic-bezier(0.32,0.72,0,1);
+}
+
+/* Apple-style entrance for the navbar controls when the page first loads:
+   a soft fade with a gentle scale-up (no sliding). `backwards` keeps them
+   hidden during their delay but reverts to normal afterwards so the condense
+   transitions above keep working. */
+@keyframes nav-pop-in {
+    from { opacity: 0; transform: scale(0.94); }
+    to   { opacity: 1; transform: none; }
+}
+.brand, .doc-selector, .search-widget {
+    animation: nav-pop-in 0.6s cubic-bezier(0.32, 0.72, 0, 1) backwards;
+}
+.brand         { animation-delay: 0.04s; }
+.doc-selector  { animation-delay: 0.10s; }
+.search-widget { animation-delay: 0.16s; }
+
+@media (prefers-reduced-motion: reduce) {
+    .brand, .doc-selector, .search-widget { animation: none; }
 }
 
 /* Condensed: keep the sidebar toggle icon, drop the back button, collection
@@ -312,6 +350,8 @@ body.nav-condensed .nav-doc-title {
     gap: 8px;
     min-width: 0;
     flex-shrink: 1;
+    /* Push the picker to the right so it sits alongside the navbar buttons. */
+    margin-left: auto;
 }
 
 .doc-selector-label {
@@ -332,13 +372,16 @@ body.nav-condensed .nav-doc-title {
     background: var(--ctrl-bg);
     border: 1px solid var(--ctrl-border);
     box-shadow: var(--ctrl-shadow);
-    -webkit-backdrop-filter: blur(8px);
-    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
     color: var(--text-primary);
     font-family: inherit;
     font-size: 13px;
     font-weight: 600;
-    padding: 7px 30px 7px 14px;
+    /* Match the 36px height of the navbar icon buttons exactly. */
+    box-sizing: border-box;
+    height: 36px;
+    padding: 0 30px 0 14px;
     border-radius: 999px;
     outline: none;
     cursor: pointer;
@@ -348,8 +391,8 @@ body.nav-condensed .nav-doc-title {
     text-overflow: ellipsis;
     white-space: nowrap;
     /* Transition only background-color (not the `background` shorthand) so the
-       chevron icon never fades/slides on hover. */
-    transition: border-color 0.15s, background-color 0.12s, color 0.25s, box-shadow 0.2s, transform 0.15s;
+       chevron icon never fades/slides on hover. Apple-style easing. */
+    transition: border-color 0.3s ease, background-color 0.3s cubic-bezier(0.32,0.72,0,1), color 0.25s ease, box-shadow 0.3s cubic-bezier(0.32,0.72,0,1), transform 0.3s cubic-bezier(0.32,0.72,0,1);
     appearance: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
@@ -359,8 +402,9 @@ body.nav-condensed .nav-doc-title {
 .doc-select:hover {
     background-color: var(--ctrl-bg-hover);
     box-shadow: var(--ctrl-shadow-hover);
-    transform: translateY(-1px);
+    transform: scale(1.02);
 }
+.doc-select:active { transform: scale(0.98); }
 .doc-select:focus { border-color: var(--accent); }
 
 /* === Floating circular icon buttons (Apple-style) ===
@@ -370,49 +414,136 @@ body.nav-condensed .nav-doc-title {
 .nav-back,
 .theme-toggle,
 .search-toggle,
-.toc-toggle {
+.toc-toggle,
+.doc-nav {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
+    /* A 36px-tall pill: with no label it stays square (=> circle via the big
+       radius); on hover it grows to fit the text label. */
+    min-width: 36px;
     height: 36px;
     padding: 0;
-    border-radius: 50%;
+    border-radius: 999px;
     background: var(--ctrl-bg);
     border: 1px solid var(--ctrl-border);
     box-shadow: var(--ctrl-shadow);
-    -webkit-backdrop-filter: blur(8px);
-    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
     color: var(--text-secondary);
     cursor: pointer;
     font-size: 16px;
     flex-shrink: 0;
-    transition: background 0.2s, color 0.15s, border-color 0.25s, box-shadow 0.2s, transform 0.15s, opacity 0.2s;
+    position: relative;
+    /* Apple-style easing: gentle, no overshoot. */
+    transition: background 0.3s cubic-bezier(0.32,0.72,0,1), color 0.2s ease, border-color 0.3s ease, box-shadow 0.3s cubic-bezier(0.32,0.72,0,1), transform 0.3s cubic-bezier(0.32,0.72,0,1), opacity 0.2s ease, padding 0.34s cubic-bezier(0.32,0.72,0,1);
 }
+/* Refractive liquid-glass rim: a bright, light-catching highlight that traces
+   the edges and corners of each button. Built as a gradient "border" using the
+   mask-compositing trick so only the 1px ring is painted. */
+.brand-toggle::after,
+.nav-back::after,
+.theme-toggle::after,
+.search-toggle::after,
+.toc-toggle::after,
+.doc-nav::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: var(--glass-rim);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    pointer-events: none;
+    opacity: 0.7;
+    transition: opacity 0.3s cubic-bezier(0.32,0.72,0,1);
+}
+.brand-toggle:hover::after,
+.nav-back:hover::after,
+.theme-toggle:hover::after,
+.search-toggle:hover::after,
+.toc-toggle:hover::after,
+.doc-nav:hover::after { opacity: 0.95; }
 .brand-toggle:hover,
 .nav-back:hover,
 .theme-toggle:hover,
 .search-toggle:hover,
-.toc-toggle:hover {
+.toc-toggle:hover,
+.doc-nav:hover {
     background: var(--ctrl-bg-hover);
     color: var(--accent);
     box-shadow: var(--ctrl-shadow-hover);
-    transform: translateY(-1px);
+}
+/* Hover-to-expand pill: only buttons that actually contain a .btn-label child
+   widen on hover. Removing the <span class="btn-label"> from a button's markup
+   disables its expansion while keeping all of this styling intact. */
+.brand-toggle:has(.btn-label):hover,
+.nav-back:has(.btn-label):hover,
+.theme-toggle:has(.btn-label):hover,
+.search-toggle:has(.btn-label):hover,
+.toc-toggle:has(.btn-label):hover,
+.doc-nav:has(.btn-label):hover {
+    padding: 0 14px;
 }
 .brand-toggle:active,
 .nav-back:active,
 .theme-toggle:active,
 .search-toggle:active,
-.toc-toggle:active { transform: translateY(0) scale(0.94); }
+.toc-toggle:active,
+.doc-nav:active { transform: scale(0.94); }
 .brand-toggle .icon,
 .nav-back .icon,
 .theme-toggle .icon,
 .search-toggle .icon,
-.toc-toggle .icon { width: 17px; height: 17px; }
+.toc-toggle .icon,
+.doc-nav .icon { width: 17px; height: 17px; }
 
-/* Back button: only meaningful once you've followed a link, so it stays
-   disabled (dimmed, non-interactive) until there is somewhere to go back to. */
-.nav-back:disabled {
+/* === Hover-to-expand button labels === */
+.btn-label {
+    display: inline-block;
+    max-width: 0;
+    opacity: 0;
+    margin-left: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1;
+    transition: max-width 0.36s cubic-bezier(0.32,0.72,0,1),
+                opacity 0.28s ease,
+                margin-left 0.36s cubic-bezier(0.32,0.72,0,1);
+}
+.brand-toggle:hover .btn-label,
+.nav-back:hover .btn-label,
+.theme-toggle:hover .btn-label,
+.search-toggle:hover .btn-label,
+.toc-toggle:hover .btn-label,
+.doc-nav:hover .btn-label {
+    max-width: 120px;
+    opacity: 1;
+    margin-left: 8px;
+}
+@media (prefers-reduced-motion: reduce) {
+    .btn-label { transition: none; }
+}
+
+/* Navbar button groups: prev/next live in their own wrapper, the search/theme/
+   TOC tools in another, so the two clusters are visually distinct. */
+.nav-btn-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* History-back and the prev/next buttons dim + disable when there is nowhere
+   to go (start/end of the collection, or no navigation history yet). */
+.nav-back:disabled,
+.doc-nav:disabled {
     opacity: 0.32;
     cursor: default;
     pointer-events: none;
@@ -420,17 +551,17 @@ body.nav-condensed .nav-doc-title {
     transform: none;
 }
 
-/* The brand/sidebar toggle icon carries the brand accent color. */
+/* The brand/sidebar toggle icon carries the brand accent color. It stays a
+   fixed circular branding mark and does NOT expand into a labelled pill. */
 .brand-toggle { color: var(--accent); }
-.brand-toggle:hover { color: var(--text-link-hover); }
+.brand-toggle:hover { color: var(--text-link-hover); padding: 0; }
 
 /* === Search widget === */
 .search-widget {
-    margin-left: auto;
     padding: 0;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 14px;          /* larger gap separates the two button groups */
     flex-shrink: 0;
 }
 
@@ -441,6 +572,8 @@ body.nav-condensed .nav-doc-title {
     background: var(--ctrl-bg);
     border: 1px solid var(--ctrl-border);
     box-shadow: var(--ctrl-shadow);
+    -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
     border-radius: 999px;
     padding: 3px 9px;
     line-height: 1.4;
@@ -683,6 +816,33 @@ body.nav-condensed .nav-doc-title {
     margin: 0;
 }
 
+/* Apple-style fade-in for the navigation entries each time a sidebar opens. */
+@keyframes nav-item-in {
+    from { opacity: 0; transform: scale(0.98); }
+    to   { opacity: 1; transform: none; }
+}
+/* Both sidebars share the exact same entrance. The left "Documents" tree nests
+   its file entries inside .nav-dir-children (not .nav-list), so it must be
+   covered too -- otherwise nested items wouldn't animate and the two sidebars
+   would look mismatched. */
+.sidebar-nav:not(.collapsed) .nav-list > li,
+.sidebar-nav:not(.collapsed) .nav-dir-children > li,
+.toc-sidebar:not(.collapsed) .nav-list > li {
+    animation: nav-item-in 0.4s cubic-bezier(0.32, 0.72, 0, 1) backwards;
+}
+.nav-list > li:nth-child(1), .nav-dir-children > li:nth-child(1) { animation-delay: 0.02s; }
+.nav-list > li:nth-child(2), .nav-dir-children > li:nth-child(2) { animation-delay: 0.05s; }
+.nav-list > li:nth-child(3), .nav-dir-children > li:nth-child(3) { animation-delay: 0.08s; }
+.nav-list > li:nth-child(4), .nav-dir-children > li:nth-child(4) { animation-delay: 0.11s; }
+.nav-list > li:nth-child(5), .nav-dir-children > li:nth-child(5) { animation-delay: 0.14s; }
+.nav-list > li:nth-child(6), .nav-dir-children > li:nth-child(6) { animation-delay: 0.17s; }
+.nav-list > li:nth-child(n+7), .nav-dir-children > li:nth-child(n+7) { animation-delay: 0.2s; }
+@media (prefers-reduced-motion: reduce) {
+    .sidebar-nav:not(.collapsed) .nav-list > li,
+    .sidebar-nav:not(.collapsed) .nav-dir-children > li,
+    .toc-sidebar:not(.collapsed) .nav-list > li { animation: none; }
+}
+
 .nav-list a {
     display: block;
     padding: 3px 10px;
@@ -750,12 +910,177 @@ body.nav-condensed .nav-doc-title {
     box-shadow: var(--shadow-sm);
     transition: background 0.25s, border-color 0.25s;
 }
-.tab-content.active { display: block; animation: fade-in 0.28s ease; }
+.tab-content.active { display: block; animation: fade-in 0.45s cubic-bezier(0.32, 0.72, 0, 1); }
 
 @keyframes fade-in {
-    from { opacity: 0; transform: translateY(6px); }
+    from { opacity: 0; transform: scale(0.99); }
     to   { opacity: 1; transform: none; }
 }
+
+/* === Reading progress bar (top of viewport) === */
+.read-progress {
+    position: fixed;
+    top: 0; left: 0;
+    height: 2px;
+    width: 0;
+    background: linear-gradient(90deg, var(--accent), var(--text-link-hover));
+    z-index: 120;
+    pointer-events: none;
+    /* width is set imperatively; keep the easing tiny so it tracks the scroll. */
+    transition: width 0.08s linear;
+}
+
+/* === Skip-to-content (keyboard / screen-reader) === */
+.skip-link {
+    position: fixed;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-150%);
+    z-index: 300;
+    background: var(--accent);
+    color: var(--nav-doc-active-fg);
+    font-weight: 700;
+    font-size: 13px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    text-decoration: none;
+    transition: transform 0.2s ease;
+}
+.skip-link:focus { transform: translateX(-50%) translateY(0); }
+
+/* === Doc meta line (breadcrumb + reading time) === */
+.doc-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    margin-bottom: 22px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.doc-breadcrumb { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.doc-breadcrumb .crumb-sep { opacity: 0.5; }
+.doc-reading-time {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+    white-space: nowrap;
+}
+.doc-reading-time .icon { width: 13px; height: 13px; }
+
+/* === Back-to-top floating button === */
+.to-top {
+    position: fixed;
+    right: 22px;
+    bottom: 22px;
+    width: 40px;
+    height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--ctrl-bg);
+    border: 1px solid var(--ctrl-border);
+    box-shadow: var(--ctrl-shadow);
+    -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
+    color: var(--text-secondary);
+    cursor: pointer;
+    z-index: 110;
+    opacity: 0;
+    transform: translateY(12px) scale(0.9);
+    pointer-events: none;
+    transition: opacity 0.3s cubic-bezier(0.32,0.72,0,1), transform 0.3s cubic-bezier(0.32,0.72,0,1), color 0.2s, background 0.2s;
+}
+.to-top.show { opacity: 1; transform: none; pointer-events: auto; }
+.to-top:hover { color: var(--accent); background: var(--ctrl-bg-hover); }
+.to-top:active { transform: scale(0.92); }
+.to-top .icon { width: 18px; height: 18px; }
+
+/* === Heading permalink anchors === */
+.tab-content .heading-anchor {
+    position: relative;
+    opacity: 0;
+    margin-left: 8px;
+    font-size: 0.8em;
+    color: var(--text-muted);
+    text-decoration: none;
+    border-bottom: none;
+    cursor: pointer;
+    transition: opacity 0.15s, color 0.15s;
+}
+.tab-content h1:hover .heading-anchor,
+.tab-content h2:hover .heading-anchor,
+.tab-content h3:hover .heading-anchor,
+.tab-content h4:hover .heading-anchor { opacity: 0.7; }
+.tab-content .heading-anchor:hover { opacity: 1; color: var(--accent); background: none; }
+
+/* "Link copied" confirmation bubble shown after clicking a permalink. */
+.tab-content .heading-anchor.copied { opacity: 1; color: var(--text-heading-h4); }
+.tab-content .heading-anchor.copied::after {
+    content: "Link copied";
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 6px);
+    transform: translateX(-50%);
+    background: var(--accent);
+    color: var(--nav-doc-active-fg);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0;
+    padding: 3px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: var(--shadow-md);
+    animation: anchor-tip 1.4s ease forwards;
+}
+@keyframes anchor-tip {
+    0%      { opacity: 0; transform: translateX(-50%) translateY(4px); }
+    12%, 78% { opacity: 1; transform: translateX(-50%) translateY(0); }
+    100%    { opacity: 0; transform: translateX(-50%) translateY(-3px); }
+}
+
+/* === Callouts / admonitions (built at conversion time) === */
+.callout {
+    margin: 18px 0;
+    padding: 12px 16px 12px 14px;
+    border: 1px solid var(--border-main);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    background: var(--bg-blockquote);
+}
+.callout-title {
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.01em;
+    margin-bottom: 4px;
+    color: var(--accent);
+}
+.callout-body > :first-child { margin-top: 0; }
+.callout-body > :last-child { margin-bottom: 0; }
+.callout-note      { border-left-color: var(--text-link);     }
+.callout-note .callout-title    { color: var(--text-link);     }
+.callout-tip       { border-left-color: var(--text-heading-h4); }
+.callout-tip .callout-title     { color: var(--text-heading-h4); }
+.callout-important { border-left-color: var(--text-heading-h3); }
+.callout-important .callout-title { color: var(--text-heading-h3); }
+.callout-warning   { border-left-color: var(--text-heading-h2); }
+.callout-warning .callout-title { color: var(--text-heading-h2); }
+.callout-caution   { border-left-color: #e0555f; }
+.callout-caution .callout-title { color: #e0555f; }
+
+/* === Visible keyboard focus rings === */
+/* Keyboard focus ring. Do NOT set border-radius here -- modern browsers round
+   the outline to the element's own radius, and forcing a radius would square
+   off the pill-shaped document selector when focused. */
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+.doc-select:focus-visible, .nav-list a:focus-visible { outline-offset: 1px; }
 
 /* === Headings === */
 .tab-content h1, .tab-content h2, .tab-content h3,
@@ -1109,8 +1434,9 @@ body.nav-condensed .nav-doc-title {
         padding-left: max(12px, env(safe-area-inset-left));
         padding-right: max(12px, env(safe-area-inset-right));
     }
-    /* Let the document picker take whatever width is left. */
-    .doc-selector { flex: 1 1 auto; }
+    /* Let the document picker take whatever width is left (an auto left margin
+       would otherwise swallow the free space and block flex-grow). */
+    .doc-selector { flex: 1 1 auto; margin-left: 0; }
     .doc-select { min-width: 0; max-width: none; width: 100%; }
 
     .content-area {
@@ -1138,10 +1464,14 @@ body.nav-condensed .nav-doc-title {
     :root { --header-height: 52px; }
     body { font-size: 15px; }
     .doc-selector-label { display: none; }
+    /* Header is tight on phones: drop the prev/next pair (the picker still
+       switches documents). */
+    .nav-btn-group-docnav { display: none; }
     .header-inner { gap: 6px; }
     .search-widget { gap: 6px; }
     /* Comfortable tap targets. */
     .brand-toggle, .theme-toggle, .search-toggle, .toc-toggle { width: 38px; height: 38px; }
+    .doc-select { height: 38px; }
     .content-area { padding-top: calc(var(--header-height) + 10px); padding-bottom: 48px; }
     .tab-content { padding: 18px 14px 32px; }
     .tab-content h1 { font-size: 1.5em; padding-bottom: 12px; margin-bottom: 18px; }
@@ -1177,6 +1507,9 @@ body.nav-condensed .nav-doc-title {
 </head>
 <body data-theme="dark" class="sidebar-collapsed toc-collapsed">
 
+<a class="skip-link" href="#tabPanels">Skip to content</a>
+<div class="read-progress" id="readProgress"></div>
+
 <div class="header-bar">
   <div class="header-inner" id="headerInner">
     <div class="brand">
@@ -1184,7 +1517,7 @@ body.nav-condensed .nav-doc-title {
         <svg class="icon brand-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M0 1.75A.75.75 0 0 1 .75 1h4.253c1.227 0 2.317.59 3 1.501A3.743 3.743 0 0 1 11.006 1h4.245a.75.75 0 0 1 .75.75v10.5a.75.75 0 0 1-.75.75h-4.507a2.25 2.25 0 0 0-1.591.659l-.622.621a.75.75 0 0 1-1.06 0l-.622-.621A2.25 2.25 0 0 0 5.258 13H.75a.75.75 0 0 1-.75-.75Zm7.251 10.324.004-5.073-.002-2.253A2.25 2.25 0 0 0 5.003 2.5H1.5v9h3.757a3.75 3.75 0 0 1 1.994.574ZM8.755 4.75l-.004 7.322a3.752 3.752 0 0 1 1.992-.572H14.5v-9h-3.495a2.25 2.25 0 0 0-2.25 2.25Z"></path></svg>
       </button>
       <button class="nav-back" id="navBack" title="Go back (Alt+&larr;)" aria-label="Go back" disabled>
-        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M7.78 12.53a.75.75 0 0 1-1.06 0L2.47 8.28a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 1.06L4.81 7.25h7.44a.75.75 0 0 1 0 1.5H4.81l2.97 2.97a.75.75 0 0 1 0 1.06Z"></path></svg>
+        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.78 1.97a.75.75 0 0 1 0 1.06L3.81 6h6.44A4.75 4.75 0 0 1 15 10.75v2.5a.75.75 0 0 1-1.5 0v-2.5a3.25 3.25 0 0 0-3.25-3.25H3.81l2.97 2.97a.75.75 0 1 1-1.06 1.06L1.47 7.28a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 0Z"></path></svg>
       </button>
       <span class="brand-name">nageshnnazare/how-to-stl</span>
     </div>
@@ -1192,13 +1525,23 @@ body.nav-condensed .nav-doc-title {
       <select class="doc-select" id="docSelect" title="Switch document"></select>
     </div>
     <div class="search-widget">
-      <button class="search-toggle" id="searchTrigger" title="Search all documents (Ctrl+K)" aria-label="Search">
-        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"></path></svg>
-      </button>
-      <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode (Ctrl+Shift+L)" aria-label="Toggle theme"></button>
-      <button class="toc-toggle" id="tocToggle" title="Toggle table of contents (Ctrl+I)" aria-label="Toggle table of contents">
-        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm3.75-1.5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Zm0 5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5ZM2 9a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm1 4a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm2.75-.5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Z"></path></svg>
-      </button>
+      <div class="nav-btn-group nav-btn-group-docnav">
+        <button class="doc-nav" id="docPrev" title="Previous document" aria-label="Previous document">
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 0 1 1.06 1.06L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z"></path></svg>
+        </button>
+        <button class="doc-nav" id="docNext" title="Next document" aria-label="Next document">
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z"></path></svg>
+        </button>
+      </div>
+      <div class="nav-btn-group nav-btn-group-tools">
+        <button class="search-toggle" id="searchTrigger" title="Search all documents (Ctrl+K)" aria-label="Search">
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"></path></svg>
+        </button>
+        <button class="theme-toggle" id="themeToggle" title="Toggle light/dark mode (Ctrl+Shift+L)" aria-label="Toggle theme"></button>
+        <button class="toc-toggle" id="tocToggle" title="Toggle table of contents (Ctrl+I)" aria-label="Toggle table of contents">
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm3.75-1.5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Zm0 5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5ZM2 9a1 1 0 1 1 0-2 1 1 0 0 1 0 2Zm1 4a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm2.75-.5h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5Z"></path></svg>
+        </button>
+      </div>
     </div>
     <div class="nav-doc-title" id="navDocTitle" aria-hidden="true"></div>
   </div>
@@ -1229,6 +1572,9 @@ body.nav-condensed .nav-doc-title {
   <div class="content-area">
     <div id="tabPanels"></div>
   </div>
+  <button class="to-top" id="toTop" title="Back to top" aria-label="Back to top">
+    <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.47 7.78a.75.75 0 0 1 0-1.06l4-4a.75.75 0 0 1 1.06 0l4 4a.75.75 0 0 1-1.06 1.06L8.75 4.81V13a.75.75 0 0 1-1.5 0V4.81L4.53 7.78a.75.75 0 0 1-1.06 0Z"></path></svg>
+  </button>
   <nav class="toc-sidebar collapsed" id="tocSidebar">
     <div class="sidebar-section" id="tocSection">
       <div class="nav-title">
@@ -1242,7 +1588,7 @@ body.nav-condensed .nav-doc-title {
 
 <script>
 const TAB_DATA = [
-  { name: `1. README`, path: `README.md`, dir: ``, body: `<h1 id="how-to-stl--the-c-standard-library-rebuilt-from-scratch-to-learn-how-it-works">how-to-stl — The C++ Standard Library, Rebuilt from Scratch to Learn How It Works</h1>
+  { name: `1. README`, path: `README.md`, dir: ``, words: 876, mins: 4, body: `<h1 id="how-to-stl--the-c-standard-library-rebuilt-from-scratch-to-learn-how-it-works">how-to-stl — The C++ Standard Library, Rebuilt from Scratch to Learn How It Works</h1>
 <p>This repository reimplements <strong>24 C++ standard-library components</strong> — every major
 container, both smart pointers, and four systems-level building blocks — in clean,
 heavily-commented, header-only C++. It is a <em>teaching</em> codebase: every header
@@ -1549,7 +1895,7 @@ real standard library, read these.</p>
 <hr />
 <h2 id="license">License</h2>
 <p>See <a href="LICENSE"><code>LICENSE</code></a>.</p>` },
-  { name: `2. Allocator / Allocator`, path: `allocator/allocator.hpp`, dir: `allocator`, body: `<h1 id="allocatorhpp">allocator.hpp</h1>
+  { name: `2. Allocator / Allocator`, path: `allocator/allocator.hpp`, dir: `allocator`, words: 2748, mins: 14, body: `<h1 id="allocatorhpp">allocator.hpp</h1>
 <pre><code class="language-cpp">#ifndef ALLOCATOR_HPP
 #define ALLOCATOR_HPP
 
@@ -2197,7 +2543,7 @@ public:
 #endif // ALLOCATOR_HPP
 
 </code></pre>` },
-  { name: `3. Allocator / Allocator Example`, path: `allocator/allocator_example.cpp`, dir: `allocator`, body: `<h1 id="allocator_examplecpp">allocator_example.cpp</h1>
+  { name: `3. Allocator / Allocator Example`, path: `allocator/allocator_example.cpp`, dir: `allocator`, words: 1788, mins: 9, body: `<h1 id="allocator_examplecpp">allocator_example.cpp</h1>
 <pre><code class="language-cpp">// ============================================================================
 //  allocator_example.cpp — runnable tour of four custom allocators
 // ============================================================================
@@ -2672,7 +3018,7 @@ malloc (baseline):
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `4. Allocator`, path: `allocator/README.md`, dir: `allocator`, body: `<h1 id="allocator--custom-memory-allocation-strategies">Allocator — Custom Memory Allocation Strategies</h1>
+  { name: `4. Allocator`, path: `allocator/README.md`, dir: `allocator`, words: 1271, mins: 6, body: `<h1 id="allocator--custom-memory-allocation-strategies">Allocator — Custom Memory Allocation Strategies</h1>
 <blockquote>
 <p>Four hand-rolled allocators that trade generality for speed. Each one matches a
 known allocation pattern — bump forward, fixed-size pools, LIFO scopes, or
@@ -3112,7 +3458,7 @@ make all                # build everything in the repo
 <p><a href="../locks/README.md"><code>locks</code></a> — mutexes if you must share one allocator</p>
 </li>
 </ul>` },
-  { name: `5. Arena Allocator / Arena Allocator`, path: `arena_allocator/arena_allocator.hpp`, dir: `arena_allocator`, body: `<h1 id="arena_allocatorhpp">arena_allocator.hpp</h1>
+  { name: `5. Arena Allocator / Arena Allocator`, path: `arena_allocator/arena_allocator.hpp`, dir: `arena_allocator`, words: 2200, mins: 11, body: `<h1 id="arena_allocatorhpp">arena_allocator.hpp</h1>
 <pre><code class="language-cpp">#ifndef ARENA_ALLOCATOR_HPP
 #define ARENA_ALLOCATOR_HPP
 
@@ -3679,7 +4025,7 @@ public:
 #endif // ARENA_ALLOCATOR_HPP
 
 </code></pre>` },
-  { name: `6. Arena Allocator / Arena Allocator Example`, path: `arena_allocator/arena_allocator_example.cpp`, dir: `arena_allocator`, body: `<h1 id="arena_allocator_examplecpp">arena_allocator_example.cpp</h1>
+  { name: `6. Arena Allocator / Arena Allocator Example`, path: `arena_allocator/arena_allocator_example.cpp`, dir: `arena_allocator`, words: 1403, mins: 7, body: `<h1 id="arena_allocator_examplecpp">arena_allocator_example.cpp</h1>
 <pre><code class="language-cpp">// ============================================================================
 //  arena_allocator_example.cpp — per-thread bump arenas in action
 // ============================================================================
@@ -4048,7 +4394,7 @@ malloc (baseline):
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `7. Arena Allocator`, path: `arena_allocator/README.md`, dir: `arena_allocator`, body: `<h1 id="arena-allocator--per-thread-bump-memory-pools">Arena Allocator — Per-Thread Bump Memory Pools</h1>
+  { name: `7. Arena Allocator`, path: `arena_allocator/README.md`, dir: `arena_allocator`, words: 1101, mins: 6, body: `<h1 id="arena-allocator--per-thread-bump-memory-pools">Arena Allocator — Per-Thread Bump Memory Pools</h1>
 <blockquote>
 <p>A <code>ThreadArenaAllocator</code> gives every OS thread its own bump arena so hot-path
 allocations are pointer arithmetic with no mutex. Individual frees are
@@ -4431,7 +4777,7 @@ make all                     # build everything in the repo
 <li><a href="../locks/README.md"><code>locks</code></a> — mutex protecting the arena map</li>
 <li><a href="../vector/README.md"><code>vector</code></a> — <code>ArenaVector</code> is a minimal arena-backed cousin</li>
 </ul>` },
-  { name: `8. Array / Array`, path: `array/array.hpp`, dir: `array`, body: `<h1 id="arrayhpp">array.hpp</h1>
+  { name: `8. Array / Array`, path: `array/array.hpp`, dir: `array`, words: 548, mins: 3, body: `<h1 id="arrayhpp">array.hpp</h1>
 <pre><code class="language-cpp">#ifndef ARRAY_HPP
 #define ARRAY_HPP
 
@@ -4540,7 +4886,7 @@ struct Array {
 #endif // ARRAY_HPP
 
 </code></pre>` },
-  { name: `9. Array / Array Example`, path: `array/array_example.cpp`, dir: `array`, body: `<h1 id="array_examplecpp">array_example.cpp</h1>
+  { name: `9. Array / Array Example`, path: `array/array_example.cpp`, dir: `array`, words: 932, mins: 5, body: `<h1 id="array_examplecpp">array_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file array_example.cpp
  * @brief Runnable tour of the fixed-size Array&lt;T, N&gt; wrapper.
@@ -4785,7 +5131,7 @@ arr2 (partial init): 10 20 0
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `10. Array`, path: `array/README.md`, dir: `array`, body: `<h1 id="array--fixed-size-stack-wrapper">Array — Fixed-Size Stack Wrapper</h1>
+  { name: `10. Array`, path: `array/README.md`, dir: `array`, words: 847, mins: 4, body: `<h1 id="array--fixed-size-stack-wrapper">Array — Fixed-Size Stack Wrapper</h1>
 <blockquote>
 <p>An <code>Array&lt;T, N&gt;</code> is a compile-time-sized bundle of <code>N</code> objects sitting inline
 in the struct — like a raw <code>T[N]</code> that knows its own length and speaks STL
@@ -5074,7 +5420,7 @@ make all            # build everything in the repo
 <li><a href="../string/README.md"><code>string</code></a> — dynamic char sequence with SSO</li>
 <li><a href="../deque/README.md"><code>deque</code></a> — runtime-sized, chunked both-end queue</li>
 </ul>` },
-  { name: `11. Bitset / Bitset`, path: `bitset/bitset.hpp`, dir: `bitset`, body: `<h1 id="bitsethpp">bitset.hpp</h1>
+  { name: `11. Bitset / Bitset`, path: `bitset/bitset.hpp`, dir: `bitset`, words: 1339, mins: 7, body: `<h1 id="bitsethpp">bitset.hpp</h1>
 <pre><code class="language-cpp">#ifndef BITSET_HPP
 #define BITSET_HPP
 
@@ -5352,7 +5698,7 @@ public:
 #endif // BITSET_HPP
 
 </code></pre>` },
-  { name: `12. Bitset / Bitset Example`, path: `bitset/bitset_example.cpp`, dir: `bitset`, body: `<h1 id="bitset_examplecpp">bitset_example.cpp</h1>
+  { name: `12. Bitset / Bitset Example`, path: `bitset/bitset_example.cpp`, dir: `bitset`, words: 1317, mins: 7, body: `<h1 id="bitset_examplecpp">bitset_example.cpp</h1>
 <pre><code class="language-cpp">// bitset_example.cpp — runnable tour of Bitset&lt;N&gt; (packed fixed-size bits)
 //
 // Demonstrates: word packing, bit index → (word, offset, mask), set/reset/flip/test,
@@ -5713,7 +6059,7 @@ count=0 none=1
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `13. Bitset`, path: `bitset/README.md`, dir: `bitset`, body: `<h1 id="bitset--fixed-size-packed-bit-array">Bitset — Fixed-Size Packed Bit Array</h1>
+  { name: `13. Bitset`, path: `bitset/README.md`, dir: `bitset`, words: 1055, mins: 5, body: `<h1 id="bitset--fixed-size-packed-bit-array">Bitset — Fixed-Size Packed Bit Array</h1>
 <blockquote>
 <p>A <code>Bitset&lt;N&gt;</code> is a compile-time-fixed array of N bits packed into machine
 words. Setting, clearing, testing, or flipping bit <code>i</code> is a single shift and
@@ -6083,7 +6429,7 @@ make all            # build everything in the repo
 <li><a href="../vector/README.md"><code>vector</code></a> — dynamic size; <code>vector&lt;bool&gt;</code> is also bit-packed</li>
 <li><a href="../set/README.md"><code>set</code></a> — sparse ordered keys when the universe is huge</li>
 </ul>` },
-  { name: `14. Data Structures`, path: `data_structures/README.md`, dir: `data_structures`, body: `<h1 id="data_structures">data_structures</h1>
+  { name: `14. Data Structures`, path: `data_structures/README.md`, dir: `data_structures`, words: 538, mins: 3, body: `<h1 id="data_structures">data_structures</h1>
 <p>Classic, undergraduate-style data structures and algorithms — the versions you
 write in a CS course to <em>understand the mechanics</em>, not the STL-grade generic
 containers in the rest of this repo.</p>
@@ -6341,7 +6687,7 @@ make help
 <li><code>graph</code> → <code>union_find</code> (relationships &amp; connectivity)</li>
 <li><code>lru_cache</code> (combining a hash map + doubly linked list into one design)</li>
 </ol>` },
-  { name: `15. Deque / Deque`, path: `deque/deque.hpp`, dir: `deque`, body: `<h1 id="dequehpp">deque.hpp</h1>
+  { name: `15. Deque / Deque`, path: `deque/deque.hpp`, dir: `deque`, words: 3317, mins: 17, body: `<h1 id="dequehpp">deque.hpp</h1>
 <pre><code class="language-cpp">#ifndef DEQUE_HPP
 #define DEQUE_HPP
 
@@ -7253,7 +7599,7 @@ bool operator&gt;=(const Deque&lt;T&gt;&amp; lhs, const Deque&lt;T&gt;&amp; rhs)
 
 
 </code></pre>` },
-  { name: `16. Deque / Deque Example`, path: `deque/deque_example.cpp`, dir: `deque`, body: `<h1 id="deque_examplecpp">deque_example.cpp</h1>
+  { name: `16. Deque / Deque Example`, path: `deque/deque_example.cpp`, dir: `deque`, words: 2032, mins: 10, body: `<h1 id="deque_examplecpp">deque_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file deque_example.cpp
  * @brief Runnable tour of the hand-rolled Deque (chunk map, both-end growth).
@@ -7844,7 +8190,7 @@ Last 10: [-40, -41, -42, -43, -44, -45, -46, -47, -48, -49]
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `17. Deque`, path: `deque/README.md`, dir: `deque`, body: `<h1 id="deque--chunked-double-ended-queue">Deque — Chunked Double-Ended Queue</h1>
+  { name: `17. Deque`, path: `deque/README.md`, dir: `deque`, words: 1328, mins: 7, body: `<h1 id="deque--chunked-double-ended-queue">Deque — Chunked Double-Ended Queue</h1>
 <blockquote>
 <p>A <code>Deque&lt;T&gt;</code> is a sequence you can grow at <strong>both</strong> ends in O(1) while still
 indexing element <code>i</code> in O(1). Memory is split into fixed-size chunks (16
@@ -8205,7 +8551,7 @@ make all             # build everything in the repo
 <li><a href="../array/README.md"><code>array</code></a> — fixed-size stack array</li>
 <li><a href="../string/README.md"><code>string</code></a> — specialized char sequence with SSO</li>
 </ul>` },
-  { name: `18. Docs`, path: `docs/README.md`, dir: `docs`, body: `<h1 id="cross-cutting-concepts">Cross-Cutting Concepts</h1>
+  { name: `18. Docs`, path: `docs/README.md`, dir: `docs`, words: 930, mins: 5, body: `<h1 id="cross-cutting-concepts">Cross-Cutting Concepts</h1>
 <p>This folder holds the <strong>repository-wide</strong> documentation: the ideas that show up
 again and again across every container. Each individual container has its own
 deep-dive README (e.g. <a href="../vector/README.md"><code>../vector/README.md</code></a>); this guide
@@ -8482,7 +8828,7 @@ reference may now dangle.</p>
 </ol>
 <hr />
 <p>← Back to the <a href="../README.md">project README</a>.</p>` },
-  { name: `19. List / List`, path: `list/list.hpp`, dir: `list`, body: `<h1 id="listhpp">list.hpp</h1>
+  { name: `19. List / List`, path: `list/list.hpp`, dir: `list`, words: 1134, mins: 6, body: `<h1 id="listhpp">list.hpp</h1>
 <pre><code class="language-cpp">#ifndef LIST_HPP
 #define LIST_HPP
 
@@ -8740,7 +9086,7 @@ public:
 #endif // LIST_HPP
 
 </code></pre>` },
-  { name: `20. List / List Example`, path: `list/list_example.cpp`, dir: `list`, body: `<h1 id="list_examplecpp">list_example.cpp</h1>
+  { name: `20. List / List Example`, path: `list/list_example.cpp`, dir: `list`, words: 1027, mins: 5, body: `<h1 id="list_examplecpp">list_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file list_example.cpp
  * @brief Runnable tour of the hand-rolled doubly-linked List.
@@ -9051,7 +9397,7 @@ After completing first task:
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `21. List`, path: `list/README.md`, dir: `list`, body: `<h1 id="list--doubly-linked-sequence">List — Doubly-Linked Sequence</h1>
+  { name: `21. List`, path: `list/README.md`, dir: `list`, words: 979, mins: 5, body: `<h1 id="list--doubly-linked-sequence">List — Doubly-Linked Sequence</h1>
 <blockquote>
 <p>A <code>List&lt;T&gt;</code> stores each element in its own heap node, wired to its neighbors
 with <code>prev</code> and <code>next</code> pointers — like a train where every car knows the car
@@ -9374,7 +9720,7 @@ make all            # build everything in the repo
 <li><a href="../deque/README.md"><code>deque</code></a> — chunked, O(1) both ends + random access</li>
 <li><a href="../array/README.md"><code>array</code></a> — fixed-size stack wrapper</li>
 </ul>` },
-  { name: `22. Locks / Locks`, path: `locks/locks.hpp`, dir: `locks`, body: `<h1 id="lockshpp">locks.hpp</h1>
+  { name: `22. Locks / Locks`, path: `locks/locks.hpp`, dir: `locks`, words: 2174, mins: 11, body: `<h1 id="lockshpp">locks.hpp</h1>
 <pre><code class="language-cpp">#ifndef LOCKS_HPP
 #define LOCKS_HPP
 
@@ -10006,7 +10352,7 @@ public:
 #endif // LOCKS_HPP
 
 </code></pre>` },
-  { name: `23. Locks / Locks Example`, path: `locks/locks_example.cpp`, dir: `locks`, body: `<h1 id="locks_examplecpp">locks_example.cpp</h1>
+  { name: `23. Locks / Locks Example`, path: `locks/locks_example.cpp`, dir: `locks`, words: 1997, mins: 10, body: `<h1 id="locks_examplecpp">locks_example.cpp</h1>
 <pre><code class="language-cpp">// ============================================================================
 //  locks_example.cpp — synchronization primitives under contention
 // ============================================================================
@@ -10594,7 +10940,7 @@ std::mutex (baseline):
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `24. Locks`, path: `locks/README.md`, dir: `locks`, body: `<h1 id="locks--thread-synchronization-primitives">Locks — Thread Synchronization Primitives</h1>
+  { name: `24. Locks`, path: `locks/README.md`, dir: `locks`, words: 1044, mins: 5, body: `<h1 id="locks--thread-synchronization-primitives">Locks — Thread Synchronization Primitives</h1>
 <blockquote>
 <p>Five hand-rolled locks from spinlocks to recursive reader/writer guards. Each
 one shows the atomics, waiting, and RAII patterns behind <code>std::mutex</code> and
@@ -11011,7 +11357,7 @@ make all                # build everything in the repo
 <li><a href="../arena_allocator/README.md"><code>arena_allocator</code></a> — mutex on arena map</li>
 <li><a href="../allocator/README.md"><code>allocator</code></a> — single-thread allocators (no locks)</li>
 </ul>` },
-  { name: `25. Map / Map`, path: `map/map.hpp`, dir: `map`, body: `<h1 id="maphpp">map.hpp</h1>
+  { name: `25. Map / Map`, path: `map/map.hpp`, dir: `map`, words: 2045, mins: 10, body: `<h1 id="maphpp">map.hpp</h1>
 <pre><code class="language-cpp">#ifndef MAP_HPP
 #define MAP_HPP
 
@@ -11590,7 +11936,7 @@ public:
 
 
 </code></pre>` },
-  { name: `26. Map / Map Example`, path: `map/map_example.cpp`, dir: `map`, body: `<h1 id="map_examplecpp">map_example.cpp</h1>
+  { name: `26. Map / Map Example`, path: `map/map_example.cpp`, dir: `map`, words: 780, mins: 4, body: `<h1 id="map_examplecpp">map_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file map_example.cpp
  * @brief Runnable tour of Map&lt;Key,T&gt; — ordered unique keys on a Red-Black tree.
@@ -11790,7 +12136,7 @@ After move: m3 size=2, m1 size=0 (emptied)
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `27. Map`, path: `map/README.md`, dir: `map`, body: `<h1 id="map--ordered-key-value-pairs-red-black-tree">Map — Ordered Key-Value Pairs (Red-Black Tree)</h1>
+  { name: `27. Map`, path: `map/README.md`, dir: `map`, words: 923, mins: 5, body: `<h1 id="map--ordered-key-value-pairs-red-black-tree">Map — Ordered Key-Value Pairs (Red-Black Tree)</h1>
 <blockquote>
 <p>A <code>Map&lt;Key, T&gt;</code> stores at most one value per key, with keys kept in sorted
 order. Look up by key, insert pairs, or walk in key order — all in O(log n)
@@ -12060,7 +12406,7 @@ make all
 <li><a href="../multiset/README.md"><code>multiset</code></a> — duplicate elements</li>
 <li><a href="../vector/README.md"><code>vector</code></a> — contiguous storage</li>
 </ul>` },
-  { name: `28. Multimap / Multimap`, path: `multimap/multimap.hpp`, dir: `multimap`, body: `<h1 id="multimaphpp">multimap.hpp</h1>
+  { name: `28. Multimap / Multimap`, path: `multimap/multimap.hpp`, dir: `multimap`, words: 688, mins: 3, body: `<h1 id="multimaphpp">multimap.hpp</h1>
 <pre><code class="language-cpp">#ifndef MULTIMAP_HPP
 #define MULTIMAP_HPP
 
@@ -12229,7 +12575,7 @@ public:
 #endif // MULTIMAP_HPP
 
 </code></pre>` },
-  { name: `29. Multimap / Multimap Example`, path: `multimap/multimap_example.cpp`, dir: `multimap`, body: `<h1 id="multimap_examplecpp">multimap_example.cpp</h1>
+  { name: `29. Multimap / Multimap Example`, path: `multimap/multimap_example.cpp`, dir: `multimap`, words: 642, mins: 3, body: `<h1 id="multimap_examplecpp">multimap_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file multimap_example.cpp
  * @brief Runnable tour of Multimap&lt;Key,T&gt; — sorted vector, duplicate keys OK.
@@ -12410,7 +12756,7 @@ contains(&quot;java&quot;): 0
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `30. Multimap`, path: `multimap/README.md`, dir: `multimap`, body: `<h1 id="multimap--ordered-key-value-with-duplicate-keys-sorted-vector">Multimap — Ordered Key-Value with Duplicate Keys (Sorted Vector)</h1>
+  { name: `30. Multimap`, path: `multimap/README.md`, dir: `multimap`, words: 726, mins: 4, body: `<h1 id="multimap--ordered-key-value-with-duplicate-keys-sorted-vector">Multimap — Ordered Key-Value with Duplicate Keys (Sorted Vector)</h1>
 <blockquote>
 <p>A <code>Multimap&lt;Key, T&gt;</code> stores many <code>(key, value)</code> pairs sorted by key. The same
 key may appear multiple times — useful for one-to-many relations (all grades
@@ -12693,7 +13039,7 @@ make all
 <li><a href="../set/README.md"><code>set</code></a> — unique sorted elements, full RB-tree diagrams</li>
 <li><a href="../vector/README.md"><code>vector</code></a> — insert shift mechanics underlying this design</li>
 </ul>` },
-  { name: `31. Multiset / Multiset`, path: `multiset/multiset.hpp`, dir: `multiset`, body: `<h1 id="multisethpp">multiset.hpp</h1>
+  { name: `31. Multiset / Multiset`, path: `multiset/multiset.hpp`, dir: `multiset`, words: 720, mins: 4, body: `<h1 id="multisethpp">multiset.hpp</h1>
 <pre><code class="language-cpp">#ifndef MULTISET_HPP
 #define MULTISET_HPP
 
@@ -12848,7 +13194,7 @@ public:
 #endif // MULTISET_HPP
 
 </code></pre>` },
-  { name: `32. Multiset / Multiset Example`, path: `multiset/multiset_example.cpp`, dir: `multiset`, body: `<h1 id="multiset_examplecpp">multiset_example.cpp</h1>
+  { name: `32. Multiset / Multiset Example`, path: `multiset/multiset_example.cpp`, dir: `multiset`, words: 672, mins: 3, body: `<h1 id="multiset_examplecpp">multiset_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file multiset_example.cpp
  * @brief Runnable tour of Multiset&lt;T&gt; — sorted vector with duplicate values.
@@ -13011,7 +13357,7 @@ After clear: empty=1, size=0
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `33. Multiset`, path: `multiset/README.md`, dir: `multiset`, body: `<h1 id="multiset--ordered-elements-with-duplicates-sorted-vector">Multiset — Ordered Elements with Duplicates (Sorted Vector)</h1>
+  { name: `33. Multiset`, path: `multiset/README.md`, dir: `multiset`, words: 823, mins: 4, body: `<h1 id="multiset--ordered-elements-with-duplicates-sorted-vector">Multiset — Ordered Elements with Duplicates (Sorted Vector)</h1>
 <blockquote>
 <p>A <code>Multiset&lt;T&gt;</code> is a sorted bag: every insertion is kept, including copies of
 the same value, and the whole sequence stays in order. Search and count are
@@ -13342,7 +13688,7 @@ make all
 <li><a href="../map/README.md"><code>map</code></a> — unique keys</li>
 <li><a href="../vector/README.md"><code>vector</code></a> — contiguous storage mechanics</li>
 </ul>` },
-  { name: `34. Optional / Optional`, path: `optional/optional.hpp`, dir: `optional`, body: `<h1 id="optionalhpp">optional.hpp</h1>
+  { name: `34. Optional / Optional`, path: `optional/optional.hpp`, dir: `optional`, words: 1090, mins: 5, body: `<h1 id="optionalhpp">optional.hpp</h1>
 <pre><code class="language-cpp">#ifndef OPTIONAL_HPP
 #define OPTIONAL_HPP
 
@@ -13580,7 +13926,7 @@ public:
 #endif // OPTIONAL_HPP
 
 </code></pre>` },
-  { name: `35. Optional / Optional Example`, path: `optional/optional_example.cpp`, dir: `optional`, body: `<h1 id="optional_examplecpp">optional_example.cpp</h1>
+  { name: `35. Optional / Optional Example`, path: `optional/optional_example.cpp`, dir: `optional`, words: 1083, mins: 5, body: `<h1 id="optional_examplecpp">optional_example.cpp</h1>
 <pre><code class="language-cpp">// optional_example.cpp — runnable tour of Optional&lt;T&gt; (maybe-value container)
 //
 // Demonstrates: disengaged vs engaged states, placement-new lifetime, value_or,
@@ -13870,7 +14216,7 @@ Partial override:
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `36. Optional`, path: `optional/README.md`, dir: `optional`, body: `<h1 id="optional--maybe-value-container">Optional — Maybe-Value Container</h1>
+  { name: `36. Optional`, path: `optional/README.md`, dir: `optional`, words: 951, mins: 5, body: `<h1 id="optional--maybe-value-container">Optional — Maybe-Value Container</h1>
 <blockquote>
 <p>An <code>Optional&lt;T&gt;</code> either holds a live value of type <code>T</code> or holds nothing at all.
 The empty state is explicit and type-safe — no <code>nullptr</code>, no <code>-1</code> sentinel, no
@@ -14276,7 +14622,7 @@ make all              # build everything in the repo
 <li><a href="../tuple/README.md"><code>tuple</code></a> — fixed product of N values</li>
 <li><a href="../map/README.md"><code>map</code></a> — <code>find</code> returns iterator, not optional (in this repo)</li>
 </ul>` },
-  { name: `37. Pair / Pair`, path: `pair/pair.hpp`, dir: `pair`, body: `<h1 id="pairhpp">pair.hpp</h1>
+  { name: `37. Pair / Pair`, path: `pair/pair.hpp`, dir: `pair`, words: 889, mins: 4, body: `<h1 id="pairhpp">pair.hpp</h1>
 <pre><code class="language-cpp">#ifndef PAIR_HPP
 #define PAIR_HPP
 
@@ -14451,7 +14797,7 @@ Pair&lt;T1, T2&gt; make_pair(T1&amp;&amp; t1, T2&amp;&amp; t2) {
 #endif // PAIR_HPP
 
 </code></pre>` },
-  { name: `38. Pair / Pair Example`, path: `pair/pair_example.cpp`, dir: `pair`, body: `<h1 id="pair_examplecpp">pair_example.cpp</h1>
+  { name: `38. Pair / Pair Example`, path: `pair/pair_example.cpp`, dir: `pair`, words: 1043, mins: 5, body: `<h1 id="pair_examplecpp">pair_example.cpp</h1>
 <pre><code class="language-cpp">// pair_example.cpp — runnable tour of Pair&lt;T1,T2&gt;
 //
 // Demonstrates: default/copy/move construction, make_pair, structured bindings,
@@ -14672,7 +15018,7 @@ Source after move.first: '' (valid but unspecified)
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `39. Pair`, path: `pair/README.md`, dir: `pair`, body: `<h1 id="pair--two-value-heterogeneous-aggregate">Pair — Two-Value Heterogeneous Aggregate</h1>
+  { name: `39. Pair`, path: `pair/README.md`, dir: `pair`, words: 1028, mins: 5, body: `<h1 id="pair--two-value-heterogeneous-aggregate">Pair — Two-Value Heterogeneous Aggregate</h1>
 <blockquote>
 <p>A <code>Pair&lt;T1, T2&gt;</code> is the smallest heterogeneous container: two values of
 (possibly different) types, exposed as public members <code>first</code> and <code>second</code>.
@@ -15016,7 +15362,7 @@ make all          # build everything in the repo
 <li><a href="../map/README.md"><code>map</code></a> — associative container whose entries are pairs</li>
 <li><a href="../optional/README.md"><code>optional</code></a> — maybe-present single value</li>
 </ul>` },
-  { name: `40. Priority Queue / Priority Queue`, path: `priority_queue/priority_queue.hpp`, dir: `priority_queue`, body: `<h1 id="priority_queuehpp">priority_queue.hpp</h1>
+  { name: `40. Priority Queue / Priority Queue`, path: `priority_queue/priority_queue.hpp`, dir: `priority_queue`, words: 1532, mins: 8, body: `<h1 id="priority_queuehpp">priority_queue.hpp</h1>
 <pre><code class="language-cpp">#ifndef PRIORITY_QUEUE_HPP
 #define PRIORITY_QUEUE_HPP
 
@@ -15408,7 +15754,7 @@ void swap(PriorityQueue&lt;T, Container, Compare&gt;&amp; lhs,
 #endif // PRIORITY_QUEUE_HPP
 
 </code></pre>` },
-  { name: `41. Priority Queue / Priority Queue Example`, path: `priority_queue/priority_queue_example.cpp`, dir: `priority_queue`, body: `<h1 id="priority_queue_examplecpp">priority_queue_example.cpp</h1>
+  { name: `41. Priority Queue / Priority Queue Example`, path: `priority_queue/priority_queue_example.cpp`, dir: `priority_queue`, words: 1483, mins: 7, body: `<h1 id="priority_queue_examplecpp">priority_queue_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file priority_queue_example.cpp
  * @brief Runnable tour of PriorityQueue — binary max-heap in a vector.
@@ -15839,7 +16185,7 @@ Original after move, empty: yes
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `42. Priority Queue`, path: `priority_queue/README.md`, dir: `priority_queue`, body: `<h1 id="priorityqueue--binary-heap-adapter">PriorityQueue — Binary Heap Adapter</h1>
+  { name: `42. Priority Queue`, path: `priority_queue/README.md`, dir: `priority_queue`, words: 774, mins: 4, body: `<h1 id="priorityqueue--binary-heap-adapter">PriorityQueue — Binary Heap Adapter</h1>
 <blockquote>
 <p>A <code>PriorityQueue&lt;T&gt;</code> always exposes the <strong>best</strong> element according to a comparator
 (default: <strong>largest</strong> on top). Internally it is a <strong>complete binary tree</strong> stored
@@ -16091,7 +16437,7 @@ make test-priority_queue
 <li><a href="../queue/README.md"><code>queue</code></a> — FIFO, not priority-ordered</li>
 <li><a href="../set/README.md"><code>set</code></a> — sorted all-elements view, O(log n) every op</li>
 </ul>` },
-  { name: `43. Queue / Queue`, path: `queue/queue.hpp`, dir: `queue`, body: `<h1 id="queuehpp">queue.hpp</h1>
+  { name: `43. Queue / Queue`, path: `queue/queue.hpp`, dir: `queue`, words: 871, mins: 4, body: `<h1 id="queuehpp">queue.hpp</h1>
 <pre><code class="language-cpp">#ifndef QUEUE_HPP
 #define QUEUE_HPP
 
@@ -16338,7 +16684,7 @@ void swap(Queue&lt;T, Container&gt;&amp; lhs, Queue&lt;T, Container&gt;&amp; rhs
 #endif // QUEUE_HPP
 
 </code></pre>` },
-  { name: `44. Queue / Queue Example`, path: `queue/queue_example.cpp`, dir: `queue`, body: `<h1 id="queue_examplecpp">queue_example.cpp</h1>
+  { name: `44. Queue / Queue Example`, path: `queue/queue_example.cpp`, dir: `queue`, words: 1322, mins: 7, body: `<h1 id="queue_examplecpp">queue_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file queue_example.cpp
  * @brief Runnable tour of Queue — FIFO adapter on std::deque.
@@ -16736,7 +17082,7 @@ Queue output (FIFO): 1 2 3 4 5
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `45. Queue`, path: `queue/README.md`, dir: `queue`, body: `<h1 id="queue--fifo-container-adapter">Queue — FIFO Container Adapter</h1>
+  { name: `45. Queue`, path: `queue/README.md`, dir: `queue`, words: 607, mins: 3, body: `<h1 id="queue--fifo-container-adapter">Queue — FIFO Container Adapter</h1>
 <blockquote>
 <p>A <code>Queue&lt;T&gt;</code> exposes <strong>First In, First Out</strong> access on top of an underlying
 sequence (default <code>std::deque&lt;T&gt;</code>). New items enter at the <strong>back</strong>; the oldest
@@ -16970,7 +17316,7 @@ make test-queue
 <li><a href="../deque/README.md"><code>deque</code></a> — default queue backend</li>
 <li><a href="../priority_queue/README.md"><code>priority_queue</code></a> — not FIFO; highest priority first</li>
 </ul>` },
-  { name: `46. Set`, path: `set/README.md`, dir: `set`, body: `<h1 id="set--ordered-unique-elements-red-black-tree">Set — Ordered Unique Elements (Red-Black Tree)</h1>
+  { name: `46. Set`, path: `set/README.md`, dir: `set`, words: 1176, mins: 6, body: `<h1 id="set--ordered-unique-elements-red-black-tree">Set — Ordered Unique Elements (Red-Black Tree)</h1>
 <blockquote>
 <p>A <code>Set&lt;T&gt;</code> keeps every value at most once, always in sorted order. You do not
 choose where an element lands — the tree&rsquo;s ordering does. Insert, erase, and
@@ -17345,7 +17691,7 @@ make all          # build everything in the repo
 <li><a href="../multimap/README.md"><code>multimap</code></a> — duplicate keys allowed</li>
 <li><a href="../vector/README.md"><code>vector</code></a> — contiguous storage when order is insertion order</li>
 </ul>` },
-  { name: `47. Set / Set`, path: `set/set.hpp`, dir: `set`, body: `<h1 id="sethpp">set.hpp</h1>
+  { name: `47. Set / Set`, path: `set/set.hpp`, dir: `set`, words: 3100, mins: 16, body: `<h1 id="sethpp">set.hpp</h1>
 <pre><code class="language-cpp">#ifndef SET_HPP
 #define SET_HPP
 
@@ -18169,7 +18515,7 @@ public:
 
 
 </code></pre>` },
-  { name: `48. Set / Set Example`, path: `set/set_example.cpp`, dir: `set`, body: `<h1 id="set_examplecpp">set_example.cpp</h1>
+  { name: `48. Set / Set Example`, path: `set/set_example.cpp`, dir: `set`, words: 1012, mins: 5, body: `<h1 id="set_examplecpp">set_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file set_example.cpp
  * @brief Runnable tour of Set&lt;T&gt; — unique sorted elements on a Red-Black tree.
@@ -18440,7 +18786,7 @@ Unique elements (sorted): 1 2 3 4 5 6 9
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `49. Shared Ptr`, path: `shared_ptr/README.md`, dir: `shared_ptr`, body: `<h1 id="sharedptr--reference-counted-shared-ownership">SharedPtr — Reference-Counted Shared Ownership</h1>
+  { name: `49. Shared Ptr`, path: `shared_ptr/README.md`, dir: `shared_ptr`, words: 1467, mins: 7, body: `<h1 id="sharedptr--reference-counted-shared-ownership">SharedPtr — Reference-Counted Shared Ownership</h1>
 <blockquote>
 <p>A <code>SharedPtr&lt;T&gt;</code> is a copyable smart pointer that shares ownership of one heap
 object with any number of sibling <code>SharedPtr</code>s. A separate <strong>control block</strong>
@@ -18897,7 +19243,7 @@ make all            # build everything in the repo
 <li><a href="../vector/README.md"><code>vector</code></a> — storing <code>SharedPtr</code> in dynamic arrays</li>
 <li><a href="../list/README.md"><code>list</code></a> — node graphs that pair <code>SharedPtr</code> child / <code>WeakPtr</code> parent</li>
 </ul>` },
-  { name: `50. Shared Ptr / Shared Ptr`, path: `shared_ptr/shared_ptr.hpp`, dir: `shared_ptr`, body: `<h1 id="shared_ptrhpp">shared_ptr.hpp</h1>
+  { name: `50. Shared Ptr / Shared Ptr`, path: `shared_ptr/shared_ptr.hpp`, dir: `shared_ptr`, words: 2446, mins: 12, body: `<h1 id="shared_ptrhpp">shared_ptr.hpp</h1>
 <pre><code class="language-cpp">#ifndef SHARED_PTR_HPP
 #define SHARED_PTR_HPP
 
@@ -19662,7 +20008,7 @@ SharedPtr&lt;T&gt; dynamic_pointer_cast(const SharedPtr&lt;U&gt;&amp; ptr) {
 
 
 </code></pre>` },
-  { name: `51. Shared Ptr / Shared Ptr Example`, path: `shared_ptr/shared_ptr_example.cpp`, dir: `shared_ptr`, body: `<h1 id="shared_ptr_examplecpp">shared_ptr_example.cpp</h1>
+  { name: `51. Shared Ptr / Shared Ptr Example`, path: `shared_ptr/shared_ptr_example.cpp`, dir: `shared_ptr`, words: 1838, mins: 9, body: `<h1 id="shared_ptr_examplecpp">shared_ptr_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file shared_ptr_example.cpp
  * @brief Runnable tour of SharedPtr / WeakPtr — reference-counted shared ownership
@@ -20149,7 +20495,7 @@ int main() {
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `52. Stack`, path: `stack/README.md`, dir: `stack`, body: `<h1 id="stack--lifo-container-adapter">Stack — LIFO Container Adapter</h1>
+  { name: `52. Stack`, path: `stack/README.md`, dir: `stack`, words: 722, mins: 4, body: `<h1 id="stack--lifo-container-adapter">Stack — LIFO Container Adapter</h1>
 <blockquote>
 <p>A <code>Stack&lt;T&gt;</code> exposes <strong>Last In, First Out</strong> access on top of an underlying
 sequence (default <code>std::deque&lt;T&gt;</code>). You only ever touch the <strong>top</strong> — push adds
@@ -20428,7 +20774,7 @@ make test-stack
 <li><a href="../vector/README.md"><code>vector</code></a> — alternative stack backend</li>
 <li><a href="../priority_queue/README.md"><code>priority_queue</code></a> — heap adapter, not LIFO</li>
 </ul>` },
-  { name: `53. Stack / Stack`, path: `stack/stack.hpp`, dir: `stack`, body: `<h1 id="stackhpp">stack.hpp</h1>
+  { name: `53. Stack / Stack`, path: `stack/stack.hpp`, dir: `stack`, words: 1026, mins: 5, body: `<h1 id="stackhpp">stack.hpp</h1>
 <pre><code class="language-cpp">#ifndef STACK_HPP
 #define STACK_HPP
 
@@ -20685,7 +21031,7 @@ void swap(Stack&lt;T, Container&gt;&amp; lhs, Stack&lt;T, Container&gt;&amp; rhs
 #endif // STACK_HPP
 
 </code></pre>` },
-  { name: `54. Stack / Stack Example`, path: `stack/stack_example.cpp`, dir: `stack`, body: `<h1 id="stack_examplecpp">stack_example.cpp</h1>
+  { name: `54. Stack / Stack Example`, path: `stack/stack_example.cpp`, dir: `stack`, words: 1301, mins: 7, body: `<h1 id="stack_examplecpp">stack_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file stack_example.cpp
  * @brief Runnable tour of Stack — LIFO adapter on std::deque (top = back).
@@ -21090,7 +21436,7 @@ Stack with vector backend:
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `55. String`, path: `string/README.md`, dir: `string`, body: `<h1 id="string--dynamic-character-sequence-with-sso">String — Dynamic Character Sequence with SSO</h1>
+  { name: `55. String`, path: `string/README.md`, dir: `string`, words: 1318, mins: 7, body: `<h1 id="string--dynamic-character-sequence-with-sso">String — Dynamic Character Sequence with SSO</h1>
 <blockquote>
 <p>A <code>String</code> is a growable, null-terminated sequence of characters — like
 <code>std::string</code>, but built from scratch so you can see every allocation decision.
@@ -21465,7 +21811,7 @@ make all            # build everything in the repo
 <li><a href="../deque/README.md"><code>deque</code></a> — double-ended queue</li>
 <li><a href="../list/README.md"><code>list</code></a> — linked structure, poor cache locality vs contiguous strings</li>
 </ul>` },
-  { name: `56. String / String`, path: `string/string.hpp`, dir: `string`, body: `<h1 id="stringhpp">string.hpp</h1>
+  { name: `56. String / String`, path: `string/string.hpp`, dir: `string`, words: 3249, mins: 16, body: `<h1 id="stringhpp">string.hpp</h1>
 <pre><code class="language-cpp">#ifndef STRING_HPP
 #define STRING_HPP
 
@@ -22380,7 +22726,7 @@ inline void swap(String&amp; lhs, String&amp; rhs) noexcept {
 
 
 </code></pre>` },
-  { name: `57. String / String Example`, path: `string/string_example.cpp`, dir: `string`, body: `<h1 id="string_examplecpp">string_example.cpp</h1>
+  { name: `57. String / String Example`, path: `string/string_example.cpp`, dir: `string`, words: 2200, mins: 11, body: `<h1 id="string_examplecpp">string_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file string_example.cpp
  * @brief Runnable tour of the hand-rolled String class (SSO, growth, search).
@@ -22948,7 +23294,7 @@ After swap:
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `58. Tests / Allocator Test`, path: `tests/allocator_test.cpp`, dir: `tests`, body: `<h1 id="allocator_testcpp">allocator_test.cpp</h1>
+  { name: `58. Tests / Allocator Test`, path: `tests/allocator_test.cpp`, dir: `tests`, words: 1151, mins: 6, body: `<h1 id="allocator_testcpp">allocator_test.cpp</h1>
 <pre><code class="language-cpp">#include &quot;../allocator/allocator.hpp&quot;
 #include &lt;iostream&gt;
 #include &lt;cstring&gt;
@@ -23381,7 +23727,7 @@ Test Results: 18 passed, 0 failed
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `59. Tests / Arena Allocator Test`, path: `tests/arena_allocator_test.cpp`, dir: `tests`, body: `<h1 id="arena_allocator_testcpp">arena_allocator_test.cpp</h1>
+  { name: `59. Tests / Arena Allocator Test`, path: `tests/arena_allocator_test.cpp`, dir: `tests`, words: 1266, mins: 6, body: `<h1 id="arena_allocator_testcpp">arena_allocator_test.cpp</h1>
 <pre><code class="language-cpp">#include &quot;arena_allocator/arena_allocator.hpp&quot;
 #include &lt;iostream&gt;
 #include &lt;cassert&gt;
@@ -23765,7 +24111,7 @@ Tests failed: 0
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `60. Tests / Array Test`, path: `tests/array_test.cpp`, dir: `tests`, body: `<h1 id="array_testcpp">array_test.cpp</h1>
+  { name: `60. Tests / Array Test`, path: `tests/array_test.cpp`, dir: `tests`, words: 1011, mins: 5, body: `<h1 id="array_testcpp">array_test.cpp</h1>
 <pre><code class="language-cpp">#include &quot;../array/array.hpp&quot;
 #include &lt;iostream&gt;
 #include &lt;cstring&gt;
@@ -24056,7 +24402,7 @@ Test Results: 12 passed, 0 failed
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `61. Tests / Bitset Test`, path: `tests/bitset_test.cpp`, dir: `tests`, body: `<h1 id="bitset_testcpp">bitset_test.cpp</h1>
+  { name: `61. Tests / Bitset Test`, path: `tests/bitset_test.cpp`, dir: `tests`, words: 1048, mins: 5, body: `<h1 id="bitset_testcpp">bitset_test.cpp</h1>
 <pre><code class="language-cpp">#include &quot;../bitset/bitset.hpp&quot;
 #include &lt;iostream&gt;
 
@@ -24370,7 +24716,7 @@ Test Results: 17 passed, 0 failed
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `62. Tests / Deque Test`, path: `tests/deque_test.cpp`, dir: `tests`, body: `<h1 id="deque_testcpp">deque_test.cpp</h1>
+  { name: `62. Tests / Deque Test`, path: `tests/deque_test.cpp`, dir: `tests`, words: 942, mins: 5, body: `<h1 id="deque_testcpp">deque_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file deque_test.cpp
  * @brief Test suite for the Deque (chunked double-ended queue).
@@ -24568,7 +24914,7 @@ Test 14: emplace/strings... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `63. Tests / List Test`, path: `tests/list_test.cpp`, dir: `tests`, body: `<h1 id="list_testcpp">list_test.cpp</h1>
+  { name: `63. Tests / List Test`, path: `tests/list_test.cpp`, dir: `tests`, words: 771, mins: 4, body: `<h1 id="list_testcpp">list_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file list_test.cpp
  * @brief Test suite for List implementation
@@ -24784,7 +25130,7 @@ Test 15: Assignment... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `64. Tests / Locks Test`, path: `tests/locks_test.cpp`, dir: `tests`, body: `<h1 id="locks_testcpp">locks_test.cpp</h1>
+  { name: `64. Tests / Locks Test`, path: `tests/locks_test.cpp`, dir: `tests`, words: 1528, mins: 8, body: `<h1 id="locks_testcpp">locks_test.cpp</h1>
 <pre><code class="language-cpp">#include &quot;../locks/locks.hpp&quot;
 #include &lt;iostream&gt;
 #include &lt;thread&gt;
@@ -25415,7 +25761,7 @@ Test Results: 23 passed, 0 failed
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `65. Tests / Map Test`, path: `tests/map_test.cpp`, dir: `tests`, body: `<h1 id="map_testcpp">map_test.cpp</h1>
+  { name: `65. Tests / Map Test`, path: `tests/map_test.cpp`, dir: `tests`, words: 943, mins: 5, body: `<h1 id="map_testcpp">map_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file map_test.cpp
  * @brief Test suite for the Map (Red-Black tree of key-&gt;value pairs).
@@ -25602,7 +25948,7 @@ Test 13: string keys... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `66. Tests / Multimap Test`, path: `tests/multimap_test.cpp`, dir: `tests`, body: `<h1 id="multimap_testcpp">multimap_test.cpp</h1>
+  { name: `66. Tests / Multimap Test`, path: `tests/multimap_test.cpp`, dir: `tests`, words: 707, mins: 4, body: `<h1 id="multimap_testcpp">multimap_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file multimap_test.cpp
  * @brief Test suite for the Multimap (sorted-vector of pairs, duplicate keys).
@@ -25746,7 +26092,7 @@ Test 10: init-list construction... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `67. Tests / Multiset Test`, path: `tests/multiset_test.cpp`, dir: `tests`, body: `<h1 id="multiset_testcpp">multiset_test.cpp</h1>
+  { name: `67. Tests / Multiset Test`, path: `tests/multiset_test.cpp`, dir: `tests`, words: 777, mins: 4, body: `<h1 id="multiset_testcpp">multiset_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file multiset_test.cpp
  * @brief Test suite for the Multiset (sorted-vector, duplicates allowed).
@@ -25913,7 +26259,7 @@ Test 12: insert/erase round-trip... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `68. Tests / Optional Test`, path: `tests/optional_test.cpp`, dir: `tests`, body: `<h1 id="optional_testcpp">optional_test.cpp</h1>
+  { name: `68. Tests / Optional Test`, path: `tests/optional_test.cpp`, dir: `tests`, words: 826, mins: 4, body: `<h1 id="optional_testcpp">optional_test.cpp</h1>
 <pre><code class="language-cpp">#include &quot;../optional/optional.hpp&quot;
 #include &lt;iostream&gt;
 #include &lt;string&gt;
@@ -26192,7 +26538,7 @@ Test Results: 13 passed, 0 failed
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `69. Tests / Pair Test`, path: `tests/pair_test.cpp`, dir: `tests`, body: `<h1 id="pair_testcpp">pair_test.cpp</h1>
+  { name: `69. Tests / Pair Test`, path: `tests/pair_test.cpp`, dir: `tests`, words: 775, mins: 4, body: `<h1 id="pair_testcpp">pair_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file pair_test.cpp
  * @brief Test suite for the Pair (two-field aggregate).
@@ -26367,7 +26713,7 @@ Test 14: mutable members... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `70. Tests / Priority Queue Test`, path: `tests/priority_queue_test.cpp`, dir: `tests`, body: `<h1 id="priority_queue_testcpp">priority_queue_test.cpp</h1>
+  { name: `70. Tests / Priority Queue Test`, path: `tests/priority_queue_test.cpp`, dir: `tests`, words: 1069, mins: 5, body: `<h1 id="priority_queue_testcpp">priority_queue_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file priority_queue_test.cpp
  * @brief Test suite for PriorityQueue implementation
@@ -26729,7 +27075,7 @@ Test 20: Exception on empty... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `71. Tests / Queue Test`, path: `tests/queue_test.cpp`, dir: `tests`, body: `<h1 id="queue_testcpp">queue_test.cpp</h1>
+  { name: `71. Tests / Queue Test`, path: `tests/queue_test.cpp`, dir: `tests`, words: 750, mins: 4, body: `<h1 id="queue_testcpp">queue_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file queue_test.cpp
  * @brief Test suite for Queue implementation
@@ -26958,7 +27304,7 @@ Test 15: Assignment... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `72. Tests`, path: `tests/README.md`, dir: `tests`, body: `<h1 id="tests">Tests</h1>
+  { name: `72. Tests`, path: `tests/README.md`, dir: `tests`, words: 469, mins: 2, body: `<h1 id="tests">Tests</h1>
 <p>One self-contained test suite per component — 24 in total. Each file is an
 ordinary C++ program with a tiny inline harness (no external framework): it runs
 a series of numbered checks, prints <code>PASSED</code>/<code>FAILED</code> for each, and exits
@@ -27143,7 +27489,7 @@ revamp.</p>
 </ol>
 <p>For a brand-new component, also add its name to <code>MODULES</code> in the root
 <a href="../Makefile"><code>Makefile</code></a> — it then gets <code>run-</code>/<code>test-</code> targets automatically.</p>` },
-  { name: `73. Tests / Set Test`, path: `tests/set_test.cpp`, dir: `tests`, body: `<h1 id="set_testcpp">set_test.cpp</h1>
+  { name: `73. Tests / Set Test`, path: `tests/set_test.cpp`, dir: `tests`, words: 809, mins: 4, body: `<h1 id="set_testcpp">set_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file set_test.cpp
  * @brief Test suite for Set implementation
@@ -27357,7 +27703,7 @@ Test 15: Iterator increment... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `74. Tests / Shared Ptr Test`, path: `tests/shared_ptr_test.cpp`, dir: `tests`, body: `<h1 id="shared_ptr_testcpp">shared_ptr_test.cpp</h1>
+  { name: `74. Tests / Shared Ptr Test`, path: `tests/shared_ptr_test.cpp`, dir: `tests`, words: 1699, mins: 8, body: `<h1 id="shared_ptr_testcpp">shared_ptr_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file shared_ptr_test.cpp
  * @brief Comprehensive test suite for shared_ptr implementation
@@ -28134,7 +28480,7 @@ Final object count: 0 (should be 0)
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `75. Tests / Stack Test`, path: `tests/stack_test.cpp`, dir: `tests`, body: `<h1 id="stack_testcpp">stack_test.cpp</h1>
+  { name: `75. Tests / Stack Test`, path: `tests/stack_test.cpp`, dir: `tests`, words: 748, mins: 4, body: `<h1 id="stack_testcpp">stack_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file stack_test.cpp
  * @brief Test suite for Stack implementation
@@ -28363,7 +28709,7 @@ Test 15: Self assignment... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `76. Tests / String Test`, path: `tests/string_test.cpp`, dir: `tests`, body: `<h1 id="string_testcpp">string_test.cpp</h1>
+  { name: `76. Tests / String Test`, path: `tests/string_test.cpp`, dir: `tests`, words: 1775, mins: 9, body: `<h1 id="string_testcpp">string_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file string_test.cpp
  * @brief Comprehensive test suite for String class implementation
@@ -29122,7 +29468,7 @@ Memory leaks: 0 (RAII ensures cleanup)
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `77. Tests / Thread Pool Test`, path: `tests/thread_pool_test.cpp`, dir: `tests`, body: `<h1 id="thread_pool_testcpp">thread_pool_test.cpp</h1>
+  { name: `77. Tests / Thread Pool Test`, path: `tests/thread_pool_test.cpp`, dir: `tests`, words: 1150, mins: 6, body: `<h1 id="thread_pool_testcpp">thread_pool_test.cpp</h1>
 <pre><code class="language-cpp">#include &quot;thread_pool/thread_pool.hpp&quot;
 #include &lt;iostream&gt;
 #include &lt;cassert&gt;
@@ -29494,7 +29840,7 @@ Tests failed: 0
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `78. Tests / Tuple Test`, path: `tests/tuple_test.cpp`, dir: `tests`, body: `<h1 id="tuple_testcpp">tuple_test.cpp</h1>
+  { name: `78. Tests / Tuple Test`, path: `tests/tuple_test.cpp`, dir: `tests`, words: 492, mins: 2, body: `<h1 id="tuple_testcpp">tuple_test.cpp</h1>
 <pre><code class="language-cpp">#include &quot;tuple/tuple.hpp&quot;
 #include &lt;iostream&gt;
 #include &lt;string&gt;
@@ -29635,7 +29981,7 @@ Test 10: Mixed types... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `79. Tests / Unique Ptr Test`, path: `tests/unique_ptr_test.cpp`, dir: `tests`, body: `<h1 id="unique_ptr_testcpp">unique_ptr_test.cpp</h1>
+  { name: `79. Tests / Unique Ptr Test`, path: `tests/unique_ptr_test.cpp`, dir: `tests`, words: 1275, mins: 6, body: `<h1 id="unique_ptr_testcpp">unique_ptr_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file test_suite.cpp
  * @brief Comprehensive test suite for unique_ptr implementation
@@ -30181,7 +30527,7 @@ Final object count: 0 (should be 0)
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `80. Tests / Unordered Map Test`, path: `tests/unordered_map_test.cpp`, dir: `tests`, body: `<h1 id="unordered_map_testcpp">unordered_map_test.cpp</h1>
+  { name: `80. Tests / Unordered Map Test`, path: `tests/unordered_map_test.cpp`, dir: `tests`, words: 781, mins: 4, body: `<h1 id="unordered_map_testcpp">unordered_map_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file unordered_map_test.cpp
  * @brief Test suite for the UnorderedMap (hash table, separate chaining).
@@ -30342,7 +30688,7 @@ Test 11: init-list construction... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `81. Tests / Unordered Set Test`, path: `tests/unordered_set_test.cpp`, dir: `tests`, body: `<h1 id="unordered_set_testcpp">unordered_set_test.cpp</h1>
+  { name: `81. Tests / Unordered Set Test`, path: `tests/unordered_set_test.cpp`, dir: `tests`, words: 730, mins: 4, body: `<h1 id="unordered_set_testcpp">unordered_set_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file unordered_set_test.cpp
  * @brief Test suite for the UnorderedSet (hash table, separate chaining).
@@ -30499,7 +30845,7 @@ Test 11: drain via erase... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `82. Tests / Vector Test`, path: `tests/vector_test.cpp`, dir: `tests`, body: `<h1 id="vector_testcpp">vector_test.cpp</h1>
+  { name: `82. Tests / Vector Test`, path: `tests/vector_test.cpp`, dir: `tests`, words: 1907, mins: 10, body: `<h1 id="vector_testcpp">vector_test.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file vector_test.cpp
  * @brief Comprehensive test suite for Vector implementation
@@ -31334,7 +31680,7 @@ Running test_no_memory_leaks... PASSED
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `83. Thread Pool`, path: `thread_pool/README.md`, dir: `thread_pool`, body: `<h1 id="thread-pool--task-based-parallelism">Thread Pool — Task-Based Parallelism</h1>
+  { name: `83. Thread Pool`, path: `thread_pool/README.md`, dir: `thread_pool`, words: 1048, mins: 5, body: `<h1 id="thread-pool--task-based-parallelism">Thread Pool — Task-Based Parallelism</h1>
 <blockquote>
 <p>A <code>ThreadPool</code> keeps N worker threads alive, blocking on a shared task queue until
 work arrives. Call <code>submit()</code> to enqueue a job and get a <code>std::future</code>; workers
@@ -31720,7 +32066,7 @@ make all                   # build everything in the repo
 <li><a href="../allocator/README.md"><code>allocator</code></a> — general allocation strategies</li>
 <li><a href="../vector/README.md"><code>vector</code></a> — containers often processed via <code>ParallelFor</code></li>
 </ul>` },
-  { name: `84. Thread Pool / Thread Pool`, path: `thread_pool/thread_pool.hpp`, dir: `thread_pool`, body: `<h1 id="thread_poolhpp">thread_pool.hpp</h1>
+  { name: `84. Thread Pool / Thread Pool`, path: `thread_pool/thread_pool.hpp`, dir: `thread_pool`, words: 1838, mins: 9, body: `<h1 id="thread_poolhpp">thread_pool.hpp</h1>
 <pre><code class="language-cpp">#ifndef THREAD_POOL_HPP
 #define THREAD_POOL_HPP
 
@@ -32275,7 +32621,7 @@ public:
 #endif // THREAD_POOL_HPP
 
 </code></pre>` },
-  { name: `85. Thread Pool / Thread Pool Example`, path: `thread_pool/thread_pool_example.cpp`, dir: `thread_pool`, body: `<h1 id="thread_pool_examplecpp">thread_pool_example.cpp</h1>
+  { name: `85. Thread Pool / Thread Pool Example`, path: `thread_pool/thread_pool_example.cpp`, dir: `thread_pool`, words: 713, mins: 4, body: `<h1 id="thread_pool_examplecpp">thread_pool_example.cpp</h1>
 <pre><code class="language-cpp">// ============================================================================
 //  thread_pool_example.cpp — producer/consumer task scheduling
 // ============================================================================
@@ -32487,7 +32833,7 @@ Stopped: no
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `86. Tuple`, path: `tuple/README.md`, dir: `tuple`, body: `<h1 id="tuple--fixed-size-heterogeneous-product-type">Tuple — Fixed-Size Heterogeneous Product Type</h1>
+  { name: `86. Tuple`, path: `tuple/README.md`, dir: `tuple`, words: 1025, mins: 5, body: `<h1 id="tuple--fixed-size-heterogeneous-product-type">Tuple — Fixed-Size Heterogeneous Product Type</h1>
 <blockquote>
 <p>A <code>Tuple&lt;Types...&gt;</code> holds a fixed number of values, each with its own type,
 accessed by compile-time index via <code>get&lt;I&gt;(t)</code>. Unlike <code>Pair</code>, there are no
@@ -32851,7 +33197,7 @@ make all           # build everything in the repo
 <li><a href="../optional/README.md"><code>optional</code></a> — zero or one value, not a fixed product</li>
 <li><a href="../map/README.md"><code>map</code></a> — uses <code>pair</code> for entries; could return <code>tuple</code> from APIs</li>
 </ul>` },
-  { name: `87. Tuple / Tuple`, path: `tuple/tuple.hpp`, dir: `tuple`, body: `<h1 id="tuplehpp">tuple.hpp</h1>
+  { name: `87. Tuple / Tuple`, path: `tuple/tuple.hpp`, dir: `tuple`, words: 1057, mins: 5, body: `<h1 id="tuplehpp">tuple.hpp</h1>
 <pre><code class="language-cpp">#ifndef TUPLE_HPP
 #define TUPLE_HPP
 
@@ -33088,7 +33434,7 @@ Tuple&lt;T1, T2, T3&gt; make_tuple(T1&amp;&amp; t1, T2&amp;&amp; t2, T3&amp;&amp
 #endif // TUPLE_HPP
 
 </code></pre>` },
-  { name: `88. Tuple / Tuple Example`, path: `tuple/tuple_example.cpp`, dir: `tuple`, body: `<h1 id="tuple_examplecpp">tuple_example.cpp</h1>
+  { name: `88. Tuple / Tuple Example`, path: `tuple/tuple_example.cpp`, dir: `tuple`, words: 902, mins: 5, body: `<h1 id="tuple_examplecpp">tuple_example.cpp</h1>
 <pre><code class="language-cpp">// tuple_example.cpp — runnable tour of Tuple (2- and 3-element specializations)
 //
 // Demonstrates: get&lt;I&gt;(), make_tuple, member vs free get, multi-value returns,
@@ -33302,7 +33648,7 @@ b.first: modified
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `89. Unique Ptr`, path: `unique_ptr/README.md`, dir: `unique_ptr`, body: `<h1 id="uniqueptr--exclusive-ownership-smart-pointer">UniquePtr — Exclusive-Ownership Smart Pointer</h1>
+  { name: `89. Unique Ptr`, path: `unique_ptr/README.md`, dir: `unique_ptr`, words: 1733, mins: 9, body: `<h1 id="uniqueptr--exclusive-ownership-smart-pointer">UniquePtr — Exclusive-Ownership Smart Pointer</h1>
 <blockquote>
 <p>A <code>UniquePtr&lt;T&gt;</code> is a move-only RAII wrapper around one heap object. Exactly one
 <code>UniquePtr</code> owns the object at any time; when that owner is destroyed, reset, or
@@ -33821,7 +34167,7 @@ make all            # build everything in the repo
 <li><a href="../vector/README.md"><code>vector</code></a> — <code>vector&lt;UniquePtr&lt;T&gt;&gt;</code> for owning collections</li>
 <li><a href="../allocator/README.md"><code>allocator</code></a> — what <code>new</code> / <code>delete</code> do under the hood</li>
 </ul>` },
-  { name: `90. Unique Ptr / Unique Ptr`, path: `unique_ptr/unique_ptr.hpp`, dir: `unique_ptr`, body: `<h1 id="unique_ptrhpp">unique_ptr.hpp</h1>
+  { name: `90. Unique Ptr / Unique Ptr`, path: `unique_ptr/unique_ptr.hpp`, dir: `unique_ptr`, words: 1754, mins: 9, body: `<h1 id="unique_ptrhpp">unique_ptr.hpp</h1>
 <pre><code class="language-cpp">#ifndef UNIQUE_PTR_HPP
 #define UNIQUE_PTR_HPP
 
@@ -34320,7 +34666,7 @@ UniquePtr&lt;T[]&gt; makeUniqueArray(std::size_t size) {
 
 
 </code></pre>` },
-  { name: `91. Unique Ptr / Unique Ptr Example`, path: `unique_ptr/unique_ptr_example.cpp`, dir: `unique_ptr`, body: `<h1 id="unique_ptr_examplecpp">unique_ptr_example.cpp</h1>
+  { name: `91. Unique Ptr / Unique Ptr Example`, path: `unique_ptr/unique_ptr_example.cpp`, dir: `unique_ptr`, words: 1562, mins: 8, body: `<h1 id="unique_ptr_examplecpp">unique_ptr_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file unique_ptr_example.cpp
  * @brief Runnable tour of UniquePtr — exclusive ownership, move-only RAII
@@ -34750,7 +35096,7 @@ Resource 'Resource1' (ID: 11) destroyed
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `92. Unordered Map`, path: `unordered_map/README.md`, dir: `unordered_map`, body: `<h1 id="unorderedmap--hash-table-of-keyvalue-pairs">UnorderedMap — Hash Table of Key–Value Pairs</h1>
+  { name: `92. Unordered Map`, path: `unordered_map/README.md`, dir: `unordered_map`, words: 821, mins: 4, body: `<h1 id="unorderedmap--hash-table-of-keyvalue-pairs">UnorderedMap — Hash Table of Key–Value Pairs</h1>
 <blockquote>
 <p>An <code>UnorderedMap&lt;Key, T&gt;</code> maps <strong>unique keys</strong> to <strong>values</strong> with <strong>no key ordering</strong>.
 Look up a key in <strong>O(1) average</strong> by hashing the key to a bucket, then scanning a
@@ -35039,7 +35385,7 @@ g++ -std=c++14 -Wall -Wextra -Wpedantic -I. unordered_map/unordered_map_example.
 <li><a href="../map/README.md"><code>map</code></a> — ordered red-black tree map</li>
 <li><a href="../multimap/README.md"><code>multimap</code></a> — multiple values per key (ordered)</li>
 </ul>` },
-  { name: `93. Unordered Map / Unordered Map`, path: `unordered_map/unordered_map.hpp`, dir: `unordered_map`, body: `<h1 id="unordered_maphpp">unordered_map.hpp</h1>
+  { name: `93. Unordered Map / Unordered Map`, path: `unordered_map/unordered_map.hpp`, dir: `unordered_map`, words: 1177, mins: 6, body: `<h1 id="unordered_maphpp">unordered_map.hpp</h1>
 <pre><code class="language-cpp">#ifndef UNORDERED_MAP_HPP
 #define UNORDERED_MAP_HPP
 
@@ -35311,7 +35657,7 @@ public:
 #endif // UNORDERED_MAP_HPP
 
 </code></pre>` },
-  { name: `94. Unordered Map / Unordered Map Example`, path: `unordered_map/unordered_map_example.cpp`, dir: `unordered_map`, body: `<h1 id="unordered_map_examplecpp">unordered_map_example.cpp</h1>
+  { name: `94. Unordered Map / Unordered Map Example`, path: `unordered_map/unordered_map_example.cpp`, dir: `unordered_map`, words: 506, mins: 3, body: `<h1 id="unordered_map_examplecpp">unordered_map_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file unordered_map_example.cpp
  * @brief Runnable tour of UnorderedMap — key→value hash table with separate chaining.
@@ -35428,7 +35774,7 @@ int main() {
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `95. Unordered Set`, path: `unordered_set/README.md`, dir: `unordered_set`, body: `<h1 id="unorderedset--hash-table-with-separate-chaining">UnorderedSet — Hash Table with Separate Chaining</h1>
+  { name: `95. Unordered Set`, path: `unordered_set/README.md`, dir: `unordered_set`, words: 1093, mins: 5, body: `<h1 id="unorderedset--hash-table-with-separate-chaining">UnorderedSet — Hash Table with Separate Chaining</h1>
 <blockquote>
 <p>An <code>UnorderedSet&lt;T&gt;</code> stores <strong>unique</strong> values with <strong>no ordering guarantee</strong>.
 You ask &ldquo;is <code>x</code> in the set?&rdquo; and get an answer in <strong>O(1) average</strong> time by
@@ -35780,7 +36126,7 @@ g++ -std=c++14 -Wall -Wextra -Wpedantic -I. unordered_set/unordered_set_example.
 <li><a href="../map/README.md"><code>map</code></a> — ordered key–value tree</li>
 <li><a href="../hash/README.md"><code>hash</code></a> — how <code>std::hash</code> is supposed to behave (conceptual)</li>
 </ul>` },
-  { name: `96. Unordered Set / Unordered Set`, path: `unordered_set/unordered_set.hpp`, dir: `unordered_set`, body: `<h1 id="unordered_sethpp">unordered_set.hpp</h1>
+  { name: `96. Unordered Set / Unordered Set`, path: `unordered_set/unordered_set.hpp`, dir: `unordered_set`, words: 1216, mins: 6, body: `<h1 id="unordered_sethpp">unordered_set.hpp</h1>
 <pre><code class="language-cpp">#ifndef UNORDERED_SET_HPP
 #define UNORDERED_SET_HPP
 
@@ -36034,7 +36380,7 @@ public:
 #endif // UNORDERED_SET_HPP
 
 </code></pre>` },
-  { name: `97. Unordered Set / Unordered Set Example`, path: `unordered_set/unordered_set_example.cpp`, dir: `unordered_set`, body: `<h1 id="unordered_set_examplecpp">unordered_set_example.cpp</h1>
+  { name: `97. Unordered Set / Unordered Set Example`, path: `unordered_set/unordered_set_example.cpp`, dir: `unordered_set`, words: 452, mins: 2, body: `<h1 id="unordered_set_examplecpp">unordered_set_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file unordered_set_example.cpp
  * @brief Runnable tour of UnorderedSet — hash table, chains, rehash, and membership.
@@ -36130,7 +36476,7 @@ After clear:  empty=1 size=0
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `98. Vector`, path: `vector/README.md`, dir: `vector`, body: `<h1 id="vector--contiguous-dynamic-array">Vector — Contiguous Dynamic Array</h1>
+  { name: `98. Vector`, path: `vector/README.md`, dir: `vector`, words: 1409, mins: 7, body: `<h1 id="vector--contiguous-dynamic-array">Vector — Contiguous Dynamic Array</h1>
 <blockquote>
 <p>A <code>Vector&lt;T&gt;</code> is a resizable array. Elements live side-by-side in one block of
 heap memory, so reading element <code>i</code> is a single pointer addition, and looping
@@ -36535,7 +36881,7 @@ make all            # build everything in the repo
 <li><a href="../list/README.md"><code>list</code></a> — O(1) middle insert, no contiguity</li>
 <li><a href="../allocator/README.md"><code>allocator</code></a> — what lives under <code>::operator new</code></li>
 </ul>` },
-  { name: `99. Vector / Vector`, path: `vector/vector.hpp`, dir: `vector`, body: `<h1 id="vectorhpp">vector.hpp</h1>
+  { name: `99. Vector / Vector`, path: `vector/vector.hpp`, dir: `vector`, words: 2910, mins: 15, body: `<h1 id="vectorhpp">vector.hpp</h1>
 <pre><code class="language-cpp">#ifndef VECTOR_HPP
 #define VECTOR_HPP
 
@@ -37319,7 +37665,7 @@ bool operator&gt;=(const Vector&lt;T&gt;&amp; lhs, const Vector&lt;T&gt;&amp; rh
 
 
 </code></pre>` },
-  { name: `100. Vector / Vector Example`, path: `vector/vector_example.cpp`, dir: `vector`, body: `<h1 id="vector_examplecpp">vector_example.cpp</h1>
+  { name: `100. Vector / Vector Example`, path: `vector/vector_example.cpp`, dir: `vector`, words: 2061, mins: 10, body: `<h1 id="vector_examplecpp">vector_example.cpp</h1>
 <pre><code class="language-cpp">/**
  * @file vector_example.cpp
  * @brief Comprehensive examples demonstrating the Vector class implementation
@@ -37897,7 +38243,7 @@ Geometric growth (doubling) reduces reallocations!
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `101. Data Structures / Avl Tree / Avl Tree`, path: `data_structures/avl_tree/avl_tree.cpp`, dir: `data_structures/avl_tree`, body: `<h1 id="avl_treecpp">avl_tree.cpp</h1>
+  { name: `101. Data Structures / Avl Tree / Avl Tree`, path: `data_structures/avl_tree/avl_tree.cpp`, dir: `data_structures/avl_tree`, words: 389, mins: 2, body: `<h1 id="avl_treecpp">avl_tree.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::AVLTree.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -I.. avl_tree.cpp -o demo &amp;&amp; ./demo
@@ -37996,7 +38342,7 @@ All self-checks passed.
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `102. Data Structures / Avl Tree / Avl Tree`, path: `data_structures/avl_tree/avl_tree.hpp`, dir: `data_structures/avl_tree`, body: `<h1 id="avl_treehpp">avl_tree.hpp</h1>
+  { name: `102. Data Structures / Avl Tree / Avl Tree`, path: `data_structures/avl_tree/avl_tree.hpp`, dir: `data_structures/avl_tree`, words: 765, mins: 4, body: `<h1 id="avl_treehpp">avl_tree.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_AVL_TREE_HPP
 #define DS_AVL_TREE_HPP
 
@@ -38248,7 +38594,7 @@ private:
 #endif  // DS_AVL_TREE_HPP
 
 </code></pre>` },
-  { name: `103. Data Structures / Avl Tree`, path: `data_structures/avl_tree/README.md`, dir: `data_structures/avl_tree`, body: `<h1 id="avl-tree">AVL Tree</h1>
+  { name: `103. Data Structures / Avl Tree`, path: `data_structures/avl_tree/README.md`, dir: `data_structures/avl_tree`, words: 198, mins: 1, body: `<h1 id="avl-tree">AVL Tree</h1>
 <p>A self-balancing binary search tree. Every node stores subtree height; the
 <strong>balance factor</strong> <code>height(left) - height(right)</code> must stay in <code>{-1, 0, 1}</code>.
 After insert (or erase), rotations restore balance in O(log N).</p>
@@ -38319,7 +38665,7 @@ g++ -std=c++14 -Wall -Wextra -I.. avl_tree.cpp -o demo &amp;&amp; ./demo
   on insert).</p>
 </li>
 </ul>` },
-  { name: `104. Data Structures / Binary Heap / Binary Heap`, path: `data_structures/binary_heap/binary_heap.cpp`, dir: `data_structures/binary_heap`, body: `<h1 id="binary_heapcpp">binary_heap.cpp</h1>
+  { name: `104. Data Structures / Binary Heap / Binary Heap`, path: `data_structures/binary_heap/binary_heap.cpp`, dir: `data_structures/binary_heap`, words: 401, mins: 2, body: `<h1 id="binary_heapcpp">binary_heap.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::BinaryHeap.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -I.. binary_heap.cpp -o demo &amp;&amp; ./demo
@@ -38435,7 +38781,7 @@ All self-checks passed.
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `105. Data Structures / Binary Heap / Binary Heap`, path: `data_structures/binary_heap/binary_heap.hpp`, dir: `data_structures/binary_heap`, body: `<h1 id="binary_heaphpp">binary_heap.hpp</h1>
+  { name: `105. Data Structures / Binary Heap / Binary Heap`, path: `data_structures/binary_heap/binary_heap.hpp`, dir: `data_structures/binary_heap`, words: 529, mins: 3, body: `<h1 id="binary_heaphpp">binary_heap.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_BINARY_HEAP_HPP
 #define DS_BINARY_HEAP_HPP
 
@@ -38573,7 +38919,7 @@ private:
 #endif  // DS_BINARY_HEAP_HPP
 
 </code></pre>` },
-  { name: `106. Data Structures / Binary Heap`, path: `data_structures/binary_heap/README.md`, dir: `data_structures/binary_heap`, body: `<h1 id="binary-heap">Binary Heap</h1>
+  { name: `106. Data Structures / Binary Heap`, path: `data_structures/binary_heap/README.md`, dir: `data_structures/binary_heap`, words: 197, mins: 1, body: `<h1 id="binary-heap">Binary Heap</h1>
 <p>A nearly-complete binary tree stored in a <code>std::vector</code>. With the default
 <code>Compare = std::less&lt;T&gt;</code> this is a <strong>max-heap</strong>: the largest element is always
 at index 0 (<code>top()</code>). Use <code>std::greater&lt;T&gt;</code> for a min-heap.</p>
@@ -38646,7 +38992,7 @@ g++ -std=c++14 -Wall -Wextra -I.. binary_heap.cpp -o demo &amp;&amp; ./demo
 <li>Repeated <code>pop</code> from a max-heap is <strong>heapsort</strong> (descending pops); reverse or
   use a min-heap for ascending order.</li>
 </ul>` },
-  { name: `107. Data Structures / Binary Search Tree / Binary Search Tree`, path: `data_structures/binary_search_tree/binary_search_tree.cpp`, dir: `data_structures/binary_search_tree`, body: `<h1 id="binary_search_treecpp">binary_search_tree.cpp</h1>
+  { name: `107. Data Structures / Binary Search Tree / Binary Search Tree`, path: `data_structures/binary_search_tree/binary_search_tree.cpp`, dir: `data_structures/binary_search_tree`, words: 365, mins: 2, body: `<h1 id="binary_search_treecpp">binary_search_tree.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::BST.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -I.. binary_search_tree.cpp -o demo &amp;&amp; ./demo
@@ -38750,7 +39096,7 @@ All self-checks passed.
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `108. Data Structures / Binary Search Tree / Binary Search Tree`, path: `data_structures/binary_search_tree/binary_search_tree.hpp`, dir: `data_structures/binary_search_tree`, body: `<h1 id="binary_search_treehpp">binary_search_tree.hpp</h1>
+  { name: `108. Data Structures / Binary Search Tree / Binary Search Tree`, path: `data_structures/binary_search_tree/binary_search_tree.hpp`, dir: `data_structures/binary_search_tree`, words: 782, mins: 4, body: `<h1 id="binary_search_treehpp">binary_search_tree.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_BINARY_SEARCH_TREE_HPP
 #define DS_BINARY_SEARCH_TREE_HPP
 
@@ -38985,7 +39331,7 @@ private:
 #endif  // DS_BINARY_SEARCH_TREE_HPP
 
 </code></pre>` },
-  { name: `109. Data Structures / Binary Search Tree`, path: `data_structures/binary_search_tree/README.md`, dir: `data_structures/binary_search_tree`, body: `<h1 id="binary-search-tree">Binary Search Tree</h1>
+  { name: `109. Data Structures / Binary Search Tree`, path: `data_structures/binary_search_tree/README.md`, dir: `data_structures/binary_search_tree`, words: 234, mins: 1, body: `<h1 id="binary-search-tree">Binary Search Tree</h1>
 <p>A rooted binary tree where every node satisfies the <strong>ordering invariant</strong>:
 all values in the left subtree are less than the node, and all values in the
 right subtree are greater. An in-order traversal therefore visits keys in
@@ -39067,7 +39413,7 @@ g++ -std=c++14 -Wall -Wextra -I.. binary_search_tree.cpp -o demo &amp;&amp; ./de
 <li><code>erase</code> with two children copies the successor&rsquo;s <em>value</em> into the node, then
   deletes the successor — pointers stay valid, no rotation needed.</li>
 </ul>` },
-  { name: `110. Data Structures / Deque / Deque`, path: `data_structures/deque/deque.cpp`, dir: `data_structures/deque`, body: `<h1 id="dequecpp">deque.cpp</h1>
+  { name: `110. Data Structures / Deque / Deque`, path: `data_structures/deque/deque.cpp`, dir: `data_structures/deque`, words: 338, mins: 2, body: `<h1 id="dequecpp">deque.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::Deque.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -Ideque deque.cpp -o demo &amp;&amp; ./demo
@@ -39171,7 +39517,7 @@ All self-checks passed.
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `111. Data Structures / Deque / Deque`, path: `data_structures/deque/deque.hpp`, dir: `data_structures/deque`, body: `<h1 id="dequehpp">deque.hpp</h1>
+  { name: `111. Data Structures / Deque / Deque`, path: `data_structures/deque/deque.hpp`, dir: `data_structures/deque`, words: 538, mins: 3, body: `<h1 id="dequehpp">deque.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_DEQUE_HPP
 #define DS_DEQUE_HPP
 
@@ -39310,7 +39656,7 @@ private:
 #endif  // DS_DEQUE_HPP
 
 </code></pre>` },
-  { name: `112. Data Structures / Deque`, path: `data_structures/deque/README.md`, dir: `data_structures/deque`, body: `<h1 id="deque">Deque</h1>
+  { name: `112. Data Structures / Deque`, path: `data_structures/deque/README.md`, dir: `data_structures/deque`, words: 200, mins: 1, body: `<h1 id="deque">Deque</h1>
 <p>A <strong>double-ended queue</strong>: push and pop at both the front and the back in O(1).
 This version uses a <strong>circular buffer</strong> with <code>head</code> and <code>tail</code> indices that
 wrap around, and doubles capacity when full.</p>
@@ -39379,7 +39725,7 @@ g++ -std=c++14 -Wall -Wextra -Ideque deque/deque.cpp -o demo &amp;&amp; ./demo
 <li><code>std::deque</code> typically uses multiple fixed-size blocks; this teaching
   version uses one ring buffer for simplicity.</li>
 </ul>` },
-  { name: `113. Data Structures / Doubly Linked List / Doubly Linked List`, path: `data_structures/doubly_linked_list/doubly_linked_list.cpp`, dir: `data_structures/doubly_linked_list`, body: `<h1 id="doubly_linked_listcpp">doubly_linked_list.cpp</h1>
+  { name: `113. Data Structures / Doubly Linked List / Doubly Linked List`, path: `data_structures/doubly_linked_list/doubly_linked_list.cpp`, dir: `data_structures/doubly_linked_list`, words: 250, mins: 1, body: `<h1 id="doubly_linked_listcpp">doubly_linked_list.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::DoublyLinkedList.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -Idoubly_linked_list doubly_linked_list.cpp -o demo &amp;&amp; ./demo
@@ -39465,7 +39811,7 @@ All self-checks passed.
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `114. Data Structures / Doubly Linked List / Doubly Linked List`, path: `data_structures/doubly_linked_list/doubly_linked_list.hpp`, dir: `data_structures/doubly_linked_list`, body: `<h1 id="doubly_linked_listhpp">doubly_linked_list.hpp</h1>
+  { name: `114. Data Structures / Doubly Linked List / Doubly Linked List`, path: `data_structures/doubly_linked_list/doubly_linked_list.hpp`, dir: `data_structures/doubly_linked_list`, words: 551, mins: 3, body: `<h1 id="doubly_linked_listhpp">doubly_linked_list.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_DOUBLY_LINKED_LIST_HPP
 #define DS_DOUBLY_LINKED_LIST_HPP
 
@@ -39634,7 +39980,7 @@ private:
 #endif  // DS_DOUBLY_LINKED_LIST_HPP
 
 </code></pre>` },
-  { name: `115. Data Structures / Doubly Linked List`, path: `data_structures/doubly_linked_list/README.md`, dir: `data_structures/doubly_linked_list`, body: `<h1 id="doubly-linked-list">Doubly Linked List</h1>
+  { name: `115. Data Structures / Doubly Linked List`, path: `data_structures/doubly_linked_list/README.md`, dir: `data_structures/doubly_linked_list`, words: 170, mins: 1, body: `<h1 id="doubly-linked-list">Doubly Linked List</h1>
 <p>Like a singly-linked list, but each node also points to its <em>previous</em> node.
 The list keeps both <code>head</code> and <code>tail</code>, so inserts and removals at either end
 are O(1).</p>
@@ -39697,7 +40043,7 @@ g++ -std=c++14 -Wall -Wextra -Idoubly_linked_list doubly_linked_list/doubly_link
 <li>Bidirectional traversal is possible, but this implementation only exposes
   forward iteration.</li>
 </ul>` },
-  { name: `116. Data Structures / Dynamic Array / Dynamic Array`, path: `data_structures/dynamic_array/dynamic_array.cpp`, dir: `data_structures/dynamic_array`, body: `<h1 id="dynamic_arraycpp">dynamic_array.cpp</h1>
+  { name: `116. Data Structures / Dynamic Array / Dynamic Array`, path: `data_structures/dynamic_array/dynamic_array.cpp`, dir: `data_structures/dynamic_array`, words: 412, mins: 2, body: `<h1 id="dynamic_arraycpp">dynamic_array.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::DynamicArray.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -I.. dynamic_array.cpp -o demo &amp;&amp; ./demo
@@ -39804,7 +40150,7 @@ All self-checks passed.
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `117. Data Structures / Dynamic Array / Dynamic Array`, path: `data_structures/dynamic_array/dynamic_array.hpp`, dir: `data_structures/dynamic_array`, body: `<h1 id="dynamic_arrayhpp">dynamic_array.hpp</h1>
+  { name: `117. Data Structures / Dynamic Array / Dynamic Array`, path: `data_structures/dynamic_array/dynamic_array.hpp`, dir: `data_structures/dynamic_array`, words: 877, mins: 4, body: `<h1 id="dynamic_arrayhpp">dynamic_array.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_DYNAMIC_ARRAY_HPP
 #define DS_DYNAMIC_ARRAY_HPP
 
@@ -40000,7 +40346,7 @@ private:
 #endif  // DS_DYNAMIC_ARRAY_HPP
 
 </code></pre>` },
-  { name: `118. Data Structures / Dynamic Array`, path: `data_structures/dynamic_array/README.md`, dir: `data_structures/dynamic_array`, body: `<h1 id="dynamic-array">Dynamic Array</h1>
+  { name: `118. Data Structures / Dynamic Array`, path: `data_structures/dynamic_array/README.md`, dir: `data_structures/dynamic_array`, words: 244, mins: 1, body: `<h1 id="dynamic-array">Dynamic Array</h1>
 <p>A resizable array — the data structure behind <code>std::vector</code>. Elements live
 contiguously in a single heap block; when it fills, we allocate a bigger block,
 copy across, and free the old one.</p>
@@ -40079,7 +40425,7 @@ g++ -std=c++14 -Wall -Wextra -I.. dynamic_array.cpp -o demo &amp;&amp; ./demo
   (the buffer moved).</p>
 </li>
 </ul>` },
-  { name: `119. Data Structures / Graph / Graph`, path: `data_structures/graph/graph.cpp`, dir: `data_structures/graph`, body: `<h1 id="graphcpp">graph.cpp</h1>
+  { name: `119. Data Structures / Graph / Graph`, path: `data_structures/graph/graph.cpp`, dir: `data_structures/graph`, words: 474, mins: 2, body: `<h1 id="graphcpp">graph.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::Graph.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -I.. graph.cpp -o demo &amp;&amp; ./demo
@@ -40221,7 +40567,7 @@ All self-checks passed.
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `120. Data Structures / Graph / Graph`, path: `data_structures/graph/graph.hpp`, dir: `data_structures/graph`, body: `<h1 id="graphhpp">graph.hpp</h1>
+  { name: `120. Data Structures / Graph / Graph`, path: `data_structures/graph/graph.hpp`, dir: `data_structures/graph`, words: 771, mins: 4, body: `<h1 id="graphhpp">graph.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_GRAPH_HPP
 #define DS_GRAPH_HPP
 
@@ -40432,7 +40778,7 @@ private:
 #endif  // DS_GRAPH_HPP
 
 </code></pre>` },
-  { name: `121. Data Structures / Graph`, path: `data_structures/graph/README.md`, dir: `data_structures/graph`, body: `<h1 id="graph-adjacency-list">Graph (Adjacency List)</h1>
+  { name: `121. Data Structures / Graph`, path: `data_structures/graph/README.md`, dir: `data_structures/graph`, words: 256, mins: 1, body: `<h1 id="graph-adjacency-list">Graph (Adjacency List)</h1>
 <p>Vertices are numbered <code>0 .. n-1</code>. Each vertex keeps a vector of outgoing
 <code>Edge { to, weight }</code> records — an <em>adjacency list</em>. Supports directed or
 undirected graphs and several classic algorithms.</p>
@@ -40529,7 +40875,7 @@ g++ -std=c++14 -Wall -Wextra -I.. graph.cpp -o demo &amp;&amp; ./demo
   layer-by-layer vs depth-first exploration.</p>
 </li>
 </ul>` },
-  { name: `122. Data Structures / Hash Table / Hash Table`, path: `data_structures/hash_table/hash_table.cpp`, dir: `data_structures/hash_table`, body: `<h1 id="hash_tablecpp">hash_table.cpp</h1>
+  { name: `122. Data Structures / Hash Table / Hash Table`, path: `data_structures/hash_table/hash_table.cpp`, dir: `data_structures/hash_table`, words: 349, mins: 2, body: `<h1 id="hash_tablecpp">hash_table.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::HashTable.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -I.. hash_table.cpp -o demo &amp;&amp; ./demo
@@ -40624,7 +40970,7 @@ All self-checks passed.
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `123. Data Structures / Hash Table / Hash Table`, path: `data_structures/hash_table/hash_table.hpp`, dir: `data_structures/hash_table`, body: `<h1 id="hash_tablehpp">hash_table.hpp</h1>
+  { name: `123. Data Structures / Hash Table / Hash Table`, path: `data_structures/hash_table/hash_table.hpp`, dir: `data_structures/hash_table`, words: 661, mins: 3, body: `<h1 id="hash_tablehpp">hash_table.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_HASH_TABLE_HPP
 #define DS_HASH_TABLE_HPP
 
@@ -40792,7 +41138,7 @@ private:
 #endif  // DS_HASH_TABLE_HPP
 
 </code></pre>` },
-  { name: `124. Data Structures / Hash Table`, path: `data_structures/hash_table/README.md`, dir: `data_structures/hash_table`, body: `<h1 id="hash-table">Hash Table</h1>
+  { name: `124. Data Structures / Hash Table`, path: `data_structures/hash_table/README.md`, dir: `data_structures/hash_table`, words: 260, mins: 1, body: `<h1 id="hash-table">Hash Table</h1>
 <p>A key–value map built from an array of <em>buckets</em>. Each bucket holds a short
 chain (vector) of entries that hashed to the same slot. Collisions are resolved
 by scanning that chain — <em>separate chaining</em>.</p>
@@ -40886,7 +41232,7 @@ g++ -std=c++14 -Wall -Wextra -I.. hash_table.cpp -o demo &amp;&amp; ./demo
 <p>This is <strong>not</strong> thread-safe; concurrent <code>put</code>/<code>get</code> needs external locking.</p>
 </li>
 </ul>` },
-  { name: `125. Data Structures / Lru Cache / Lru Cache`, path: `data_structures/lru_cache/lru_cache.cpp`, dir: `data_structures/lru_cache`, body: `<h1 id="lru_cachecpp">lru_cache.cpp</h1>
+  { name: `125. Data Structures / Lru Cache / Lru Cache`, path: `data_structures/lru_cache/lru_cache.cpp`, dir: `data_structures/lru_cache`, words: 450, mins: 2, body: `<h1 id="lru_cachecpp">lru_cache.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::LRUCache.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -I.. lru_cache.cpp -o demo &amp;&amp; ./demo
@@ -41005,7 +41351,7 @@ All self-checks passed.
 
 
 </code></pre>` },
-  { name: `126. Data Structures / Lru Cache / Lru Cache`, path: `data_structures/lru_cache/lru_cache.hpp`, dir: `data_structures/lru_cache`, body: `<h1 id="lru_cachehpp">lru_cache.hpp</h1>
+  { name: `126. Data Structures / Lru Cache / Lru Cache`, path: `data_structures/lru_cache/lru_cache.hpp`, dir: `data_structures/lru_cache`, words: 980, mins: 5, body: `<h1 id="lru_cachehpp">lru_cache.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_LRU_CACHE_HPP
 #define DS_LRU_CACHE_HPP
 
@@ -41200,7 +41546,7 @@ private:
 #endif  // DS_LRU_CACHE_HPP
 
 </code></pre>` },
-  { name: `127. Data Structures / Lru Cache`, path: `data_structures/lru_cache/README.md`, dir: `data_structures/lru_cache`, body: `<h1 id="lru-cache">LRU Cache</h1>
+  { name: `127. Data Structures / Lru Cache`, path: `data_structures/lru_cache/README.md`, dir: `data_structures/lru_cache`, words: 348, mins: 2, body: `<h1 id="lru-cache">LRU Cache</h1>
 <p>A fixed-capacity key→value cache that, when full, evicts the <strong>Least Recently
 Used</strong> entry. Every <code>get</code> and <code>put</code> &ldquo;touches&rdquo; a key and makes it the most
 recently used; the entry nobody has touched for longest is the first to go.</p>
@@ -41292,7 +41638,7 @@ g++ -std=c++14 -Wall -Wextra -I.. lru_cache.cpp -o demo &amp;&amp; ./demo
   production cache would add thread-safety and a pluggable eviction policy.</p>
 </li>
 </ul>` },
-  { name: `128. Data Structures / Queue / Queue`, path: `data_structures/queue/queue.cpp`, dir: `data_structures/queue`, body: `<h1 id="queuecpp">queue.cpp</h1>
+  { name: `128. Data Structures / Queue / Queue`, path: `data_structures/queue/queue.cpp`, dir: `data_structures/queue`, words: 275, mins: 1, body: `<h1 id="queuecpp">queue.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::Queue.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -Iqueue queue.cpp -o demo &amp;&amp; ./demo
@@ -41370,7 +41716,7 @@ All self-checks passed.
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `129. Data Structures / Queue / Queue`, path: `data_structures/queue/queue.hpp`, dir: `data_structures/queue`, body: `<h1 id="queuehpp">queue.hpp</h1>
+  { name: `129. Data Structures / Queue / Queue`, path: `data_structures/queue/queue.hpp`, dir: `data_structures/queue`, words: 471, mins: 2, body: `<h1 id="queuehpp">queue.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_QUEUE_HPP
 #define DS_QUEUE_HPP
 
@@ -41494,7 +41840,7 @@ private:
 #endif  // DS_QUEUE_HPP
 
 </code></pre>` },
-  { name: `130. Data Structures / Queue`, path: `data_structures/queue/README.md`, dir: `data_structures/queue`, body: `<h1 id="queue">Queue</h1>
+  { name: `130. Data Structures / Queue`, path: `data_structures/queue/README.md`, dir: `data_structures/queue`, words: 176, mins: 1, body: `<h1 id="queue">Queue</h1>
 <p>A <strong>first-in, first-out</strong> (FIFO) container: enqueue adds at the back,
 dequeue removes from the front. This version uses a <strong>circular buffer</strong> —
 a fixed array with <code>head</code> and <code>tail</code> indices that wrap around at the end.</p>
@@ -41557,7 +41903,7 @@ g++ -std=c++14 -Wall -Wextra -Iqueue queue/queue.cpp -o demo &amp;&amp; ./demo
 <li>After growth, the ring is linearized (head reset to 0) to keep indexing simple.</li>
 <li>A linked-list queue avoids wraparound but allocates per element.</li>
 </ul>` },
-  { name: `131. Data Structures / Singly Linked List`, path: `data_structures/singly_linked_list/README.md`, dir: `data_structures/singly_linked_list`, body: `<h1 id="singly-linked-list">Singly Linked List</h1>
+  { name: `131. Data Structures / Singly Linked List`, path: `data_structures/singly_linked_list/README.md`, dir: `data_structures/singly_linked_list`, words: 202, mins: 1, body: `<h1 id="singly-linked-list">Singly Linked List</h1>
 <p>A chain of nodes where each node holds a value and a pointer to the next node.
 The list keeps a <code>head</code> pointer to the first node (or <code>nullptr</code> when empty).
 There is no random access — reaching index <em>i</em> means walking <em>i</em> links.</p>
@@ -41636,7 +41982,7 @@ g++ -std=c++14 -Wall -Wextra -Isingly_linked_list singly_linked_list/singly_link
 </li>
 <li>Each node is a separate heap allocation — more overhead than a contiguous array.</li>
 </ul>` },
-  { name: `132. Data Structures / Singly Linked List / Singly Linked List`, path: `data_structures/singly_linked_list/singly_linked_list.cpp`, dir: `data_structures/singly_linked_list`, body: `<h1 id="singly_linked_listcpp">singly_linked_list.cpp</h1>
+  { name: `132. Data Structures / Singly Linked List / Singly Linked List`, path: `data_structures/singly_linked_list/singly_linked_list.cpp`, dir: `data_structures/singly_linked_list`, words: 314, mins: 2, body: `<h1 id="singly_linked_listcpp">singly_linked_list.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::SinglyLinkedList.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -Isingly_linked_list singly_linked_list.cpp -o demo &amp;&amp; ./demo
@@ -41745,7 +42091,7 @@ All self-checks passed.
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `133. Data Structures / Singly Linked List / Singly Linked List`, path: `data_structures/singly_linked_list/singly_linked_list.hpp`, dir: `data_structures/singly_linked_list`, body: `<h1 id="singly_linked_listhpp">singly_linked_list.hpp</h1>
+  { name: `133. Data Structures / Singly Linked List / Singly Linked List`, path: `data_structures/singly_linked_list/singly_linked_list.hpp`, dir: `data_structures/singly_linked_list`, words: 669, mins: 3, body: `<h1 id="singly_linked_listhpp">singly_linked_list.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_SINGLY_LINKED_LIST_HPP
 #define DS_SINGLY_LINKED_LIST_HPP
 
@@ -41938,7 +42284,7 @@ private:
 #endif  // DS_SINGLY_LINKED_LIST_HPP
 
 </code></pre>` },
-  { name: `134. Data Structures / Stack`, path: `data_structures/stack/README.md`, dir: `data_structures/stack`, body: `<h1 id="stack">Stack</h1>
+  { name: `134. Data Structures / Stack`, path: `data_structures/stack/README.md`, dir: `data_structures/stack`, words: 177, mins: 1, body: `<h1 id="stack">Stack</h1>
 <p>A <strong>last-in, first-out</strong> (LIFO) container: the most recently pushed element
 is the first one popped. This version is backed by a growing array (like
 <code>std::stack</code> often is under the hood).</p>
@@ -42003,7 +42349,7 @@ g++ -std=c++14 -Wall -Wextra -Istack stack/stack.cpp -o demo &amp;&amp; ./demo
 <li><code>pop()</code> does not return the value; read <code>top()</code> before popping if you need it.</li>
 <li>A linked-list stack avoids reallocation but pays per-node allocation overhead.</li>
 </ul>` },
-  { name: `135. Data Structures / Stack / Stack`, path: `data_structures/stack/stack.cpp`, dir: `data_structures/stack`, body: `<h1 id="stackcpp">stack.cpp</h1>
+  { name: `135. Data Structures / Stack / Stack`, path: `data_structures/stack/stack.cpp`, dir: `data_structures/stack`, words: 210, mins: 1, body: `<h1 id="stackcpp">stack.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::Stack.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -Istack stack.cpp -o demo &amp;&amp; ./demo
@@ -42071,7 +42417,7 @@ All self-checks passed.
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `136. Data Structures / Stack / Stack`, path: `data_structures/stack/stack.hpp`, dir: `data_structures/stack`, body: `<h1 id="stackhpp">stack.hpp</h1>
+  { name: `136. Data Structures / Stack / Stack`, path: `data_structures/stack/stack.hpp`, dir: `data_structures/stack`, words: 388, mins: 2, body: `<h1 id="stackhpp">stack.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_STACK_HPP
 #define DS_STACK_HPP
 
@@ -42178,7 +42524,7 @@ private:
 #endif  // DS_STACK_HPP
 
 </code></pre>` },
-  { name: `137. Data Structures / Trie`, path: `data_structures/trie/README.md`, dir: `data_structures/trie`, body: `<h1 id="trie-prefix-tree">Trie (Prefix Tree)</h1>
+  { name: `137. Data Structures / Trie`, path: `data_structures/trie/README.md`, dir: `data_structures/trie`, words: 220, mins: 1, body: `<h1 id="trie-prefix-tree">Trie (Prefix Tree)</h1>
 <p>A tree of characters for storing lowercase English words. Each edge is one
 letter; a node marked as end-of-word means the path from the root spells a
 complete word. Great for prefix lookup (<code>starts_with</code>) and autocomplete.</p>
@@ -42253,7 +42599,7 @@ g++ -std=c++14 -Wall -Wextra -I.. trie.cpp -o demo &amp;&amp; ./demo
 <li><code>erase</code> prunes dead branches when a node has no children and is not an
   end-of-word marker.</li>
 </ul>` },
-  { name: `138. Data Structures / Trie / Trie`, path: `data_structures/trie/trie.cpp`, dir: `data_structures/trie`, body: `<h1 id="triecpp">trie.cpp</h1>
+  { name: `138. Data Structures / Trie / Trie`, path: `data_structures/trie/trie.cpp`, dir: `data_structures/trie`, words: 260, mins: 1, body: `<h1 id="triecpp">trie.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::Trie.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -I.. trie.cpp -o demo &amp;&amp; ./demo
@@ -42344,7 +42690,7 @@ All self-checks passed.
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `139. Data Structures / Trie / Trie`, path: `data_structures/trie/trie.hpp`, dir: `data_structures/trie`, body: `<h1 id="triehpp">trie.hpp</h1>
+  { name: `139. Data Structures / Trie / Trie`, path: `data_structures/trie/trie.hpp`, dir: `data_structures/trie`, words: 666, mins: 3, body: `<h1 id="triehpp">trie.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_TRIE_HPP
 #define DS_TRIE_HPP
 
@@ -42541,7 +42887,7 @@ private:
 #endif  // DS_TRIE_HPP
 
 </code></pre>` },
-  { name: `140. Data Structures / Union Find`, path: `data_structures/union_find/README.md`, dir: `data_structures/union_find`, body: `<h1 id="union-find-disjoint-set">Union-Find (Disjoint Set)</h1>
+  { name: `140. Data Structures / Union Find`, path: `data_structures/union_find/README.md`, dir: `data_structures/union_find`, words: 260, mins: 1, body: `<h1 id="union-find-disjoint-set">Union-Find (Disjoint Set)</h1>
 <p>Tracks a partition of <code>n</code> items into disjoint groups. Supports fast
 <em>merge</em> (<code>unite</code>) and <em>same-set?</em> (<code>connected</code>) queries via a forest of
 parent pointers, with <strong>path compression</strong> and <strong>union by rank</strong>.</p>
@@ -42628,7 +42974,7 @@ g++ -std=c++14 -Wall -Wextra -I.. union_find.cpp -o demo &amp;&amp; ./demo
   offline connectivity queries.</p>
 </li>
 </ul>` },
-  { name: `141. Data Structures / Union Find / Union Find`, path: `data_structures/union_find/union_find.cpp`, dir: `data_structures/union_find`, body: `<h1 id="union_findcpp">union_find.cpp</h1>
+  { name: `141. Data Structures / Union Find / Union Find`, path: `data_structures/union_find/union_find.cpp`, dir: `data_structures/union_find`, words: 276, mins: 1, body: `<h1 id="union_findcpp">union_find.cpp</h1>
 <pre><code class="language-cpp">// Demo + self-checks for ds::DisjointSet.
 //
 //   build &amp; run:  g++ -std=c++14 -Wall -Wextra -I.. union_find.cpp -o demo &amp;&amp; ./demo
@@ -42710,7 +43056,7 @@ All self-checks passed.
  * ============================================================================ */
 
 </code></pre>` },
-  { name: `142. Data Structures / Union Find / Union Find`, path: `data_structures/union_find/union_find.hpp`, dir: `data_structures/union_find`, body: `<h1 id="union_findhpp">union_find.hpp</h1>
+  { name: `142. Data Structures / Union Find / Union Find`, path: `data_structures/union_find/union_find.hpp`, dir: `data_structures/union_find`, words: 443, mins: 2, body: `<h1 id="union_findhpp">union_find.hpp</h1>
 <pre><code class="language-cpp">#ifndef DS_UNION_FIND_HPP
 #define DS_UNION_FIND_HPP
 
@@ -42837,6 +43183,20 @@ function prettify(component) {
     return c.replace(/\b\w/g, l => l.toUpperCase());
 }
 
+// Like prettify(), but keeps any leading "01_"/"2-" style number as a "01. "
+// prefix so the sidebar mirrors the on-disk ordering of the documents.
+function prettifyKeepNum(component) {
+    const m = component.match(/^([0-9]+)[_-]/);
+    const prefix = m ? m[1] + '. ' : '';
+    return prefix + prettify(component);
+}
+
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => HTML_ESCAPES[c]); }
+function cleanName(name) { return (name || '').replace(/^\s*\d+\.\s*/, ''); }
+
+const CLOCK_ICON = '<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8.75-4.25v3.94l2.4 2.4a.75.75 0 0 1-1.06 1.06l-2.62-2.62a.75.75 0 0 1-.22-.53V3.75a.75.75 0 0 1 1.5 0Z"></path></svg>';
+
 TAB_DATA.forEach((tab, idx) => {
     const opt = document.createElement('option');
     opt.value = String(idx);
@@ -42848,6 +43208,22 @@ TAB_DATA.forEach((tab, idx) => {
     panel.id = 'panel-' + idx;
     panel.dataset.dir = tab.dir || '';
     panel.innerHTML = tab.body;
+
+    // Breadcrumb + reading-time meta line (prepended, built once).
+    const meta = document.createElement('div');
+    meta.className = 'doc-meta';
+    const crumbs = cleanName(tab.name).split(' / ');
+    const crumbHtml = crumbs.map((c, i) =>
+        '<span class="crumb">' + escapeHtml(c) + '</span>' +
+        (i < crumbs.length - 1 ? '<span class="crumb-sep">/</span>' : '')
+    ).join('');
+    const words = (tab.words || 0).toLocaleString();
+    meta.innerHTML =
+        '<span class="doc-breadcrumb">' + crumbHtml + '</span>' +
+        '<span class="doc-reading-time">' + CLOCK_ICON +
+        (tab.mins || 1) + ' min read \u00b7 ' + words + ' words</span>';
+    panel.insertBefore(meta, panel.firstChild);
+
     tabPanels.appendChild(panel);
 });
 
@@ -42892,7 +43268,7 @@ function createTreeHtml(node, parentPath = '') {
         
         const label = document.createElement('span');
         label.className = 'dir-name';
-        label.textContent = prettify(dirName);
+        label.textContent = prettifyKeepNum(dirName);
         
         header.appendChild(chevron);
         header.appendChild(folder);
@@ -42917,10 +43293,10 @@ function createTreeHtml(node, parentPath = '') {
         const a = document.createElement('a');
         a.href = '#tab-' + idx;
         
-        // Use the basename or prettified name without numbers
+        // Use the basename, keeping any leading "NN_" document number prefix.
         const baseName = tab.path.split('/').pop() || tab.name;
         let displayName = baseName.replace(/\.[a-zA-Z0-9]+$/, '');
-        displayName = prettify(displayName);
+        displayName = prettifyKeepNum(displayName);
         
         a.textContent = displayName;
         a.title = tab.name;
@@ -43035,6 +43411,23 @@ docSelect.addEventListener('change', () => {
     activateTab(parseInt(docSelect.value, 10));
 });
 
+/* Previous / next document buttons in the navbar. */
+const docPrevBtn = document.getElementById('docPrev');
+const docNextBtn = document.getElementById('docNext');
+if (docPrevBtn) docPrevBtn.addEventListener('click', () => {
+    const i = currentTabIdx();
+    if (i > 0) { pushHistory(); activateTab(i - 1); }
+});
+if (docNextBtn) docNextBtn.addEventListener('click', () => {
+    const i = currentTabIdx();
+    if (i < TAB_DATA.length - 1) { pushHistory(); activateTab(i + 1); }
+});
+
+function updateDocNav(idx) {
+    if (docPrevBtn) docPrevBtn.disabled = (idx <= 0);
+    if (docNextBtn) docNextBtn.disabled = (idx >= TAB_DATA.length - 1);
+}
+
 /* ───── Syntax highlighting ───── */
 
 function addCopyButton(pre, block) {
@@ -43115,34 +43508,56 @@ function getStoredTheme() {
     try { return localStorage.getItem('doc-theme'); } catch(e) { return null; }
 }
 
-function setTheme(theme) {
+const darkMql = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+function osTheme() { return (darkMql && darkMql.matches) ? 'dark' : 'light'; }
+
+// Apply a theme. `persist` is true ONLY for an explicit user action; auto/OS
+// applications must NOT write to storage, otherwise the very first auto theme
+// would look like an explicit choice and we'd stop following the OS.
+function setTheme(theme, persist) {
     document.body.setAttribute('data-theme', theme);
     hljsLink.href = theme === 'light' ? HLJS_LIGHT : HLJS_DARK;
-    themeToggleBtn.innerHTML = theme === 'light' ? ICON_SUN : ICON_MOON;
+    themeToggleBtn.innerHTML = (theme === 'light' ? ICON_SUN : ICON_MOON);
     themeToggleBtn.title = theme === 'light'
         ? 'Switch to dark mode (Ctrl+Shift+L)'
         : 'Switch to light mode (Ctrl+Shift+L)';
-    try { localStorage.setItem('doc-theme', theme); } catch(e) {}
+    if (persist) {
+        try { localStorage.setItem('doc-theme', theme); } catch(e) {}
+    }
+}
+
+function toggleTheme() {
+    const current = document.body.getAttribute('data-theme') || 'dark';
+    setTheme(current === 'dark' ? 'light' : 'dark', true);
 }
 
 (function initTheme() {
     const stored = getStoredTheme();
-    const theme = (stored === 'light' || stored === 'dark')
-        ? stored
-        : (document.body.getAttribute('data-theme') || 'dark');
-    setTheme(theme);
+    if (stored === 'light' || stored === 'dark') {
+        setTheme(stored, false);              // explicit user choice wins
+    } else {
+        setTheme(osTheme(), false);           // otherwise follow the OS (live)
+    }
 })();
 
-themeToggleBtn.addEventListener('click', () => {
-    const current = document.body.getAttribute('data-theme') || 'dark';
-    setTheme(current === 'dark' ? 'light' : 'dark');
-});
+// Live-follow the OS appearance while the reader hasn't picked a theme manually.
+if (darkMql) {
+    const onOsChange = (e) => {
+        const stored = getStoredTheme();
+        if (stored !== 'light' && stored !== 'dark') {
+            setTheme(e.matches ? 'dark' : 'light', false);
+        }
+    };
+    if (darkMql.addEventListener) darkMql.addEventListener('change', onOsChange);
+    else if (darkMql.addListener) darkMql.addListener(onOsChange);  // older Safari
+}
+
+themeToggleBtn.addEventListener('click', toggleTheme);
 
 document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'L') {
         e.preventDefault();
-        const current = document.body.getAttribute('data-theme') || 'dark';
-        setTheme(current === 'dark' ? 'light' : 'dark');
+        toggleTheme();
     }
 });
 
@@ -43175,10 +43590,12 @@ function activateTab(idx, resetScroll) {
     }
     history.replaceState(null, null, '#tab-' + idx);
     if (typeof buildToc === 'function') buildToc(idx);
-    // Reflect the active document's title in the condensing navbar.
+    // Reflect the active document's title in the condensing navbar. Use the
+    // full name (including any leading number) so it matches the picker exactly.
     if (navDocTitle && TAB_DATA[idx]) {
-        navDocTitle.textContent = TAB_DATA[idx].name.replace(/^\s*\d+\.\s*/, '');
+        navDocTitle.textContent = TAB_DATA[idx].name;
     }
+    if (typeof updateDocNav === 'function') updateDocNav(idx);
     // Jump back to the top when switching documents so the reader starts at
     // the beginning rather than wherever the previous doc was scrolled to.
     if (resetScroll) {
@@ -43186,7 +43603,26 @@ function activateTab(idx, resetScroll) {
         document.body.classList.remove('nav-condensed');
         navLastY = 0;
     }
+    LS.set('doc-last-idx', String(idx));
 }
+
+/* ───── Lightweight state persistence (no per-scroll writes) ─────
+   Remembers the last document, sidebar/TOC open state and scroll position so
+   reopening the file resumes where you left off. Writes happen only on tab
+   switch, panel toggle and page hide -- never during scrolling. */
+const LS = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+};
+
+function persistScroll() {
+    LS.set('doc-last-idx', String(currentTabIdx()));
+    LS.set('doc-last-y', String(Math.round(window.scrollY)));
+}
+window.addEventListener('pagehide', persistScroll);
+document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') persistScroll();
+});
 
 /* ───── Search index: pre-extract plain text per block ───── */
 
@@ -43437,6 +43873,8 @@ function clearHighlights() {
 const sidebarNav = document.getElementById('sidebarNav');
 const navList = document.getElementById('navList');
 const sidebarToggle = document.getElementById('sidebarToggle');
+const readProgress = document.getElementById('readProgress');
+const toTopBtn = document.getElementById('toTop');
 let currentTocHeadings = [];
 
 function buildToc(panelIdx) {
@@ -43447,13 +43885,51 @@ function buildToc(panelIdx) {
     const headings = panel.querySelectorAll('h1, h2, h3, h4');
     headings.forEach((h, i) => {
         if (!h.id) h.id = 'autoid-' + panelIdx + '-' + i;
+        // Capture the clean heading text once (before any permalink anchor is
+        // added) so the TOC label never picks up the trailing '#'.
+        let title = h.getAttribute('data-title');
+        if (title === null) {
+            title = h.textContent;
+            h.setAttribute('data-title', title);
+            // Add a hover-revealed permalink anchor (built lazily, only for the
+            // doc currently being viewed).
+            const perma = document.createElement('a');
+            perma.className = 'heading-anchor';
+            perma.href = '#' + h.id;
+            perma.textContent = '#';
+            perma.setAttribute('aria-label', 'Copy link to this section');
+            perma.title = 'Copy link to this section';
+            const headingId = h.id;
+            perma.addEventListener('click', function(e) {
+                e.preventDefault();
+                // Keep the doc-content click handler from also firing (it would
+                // re-run scroll/history logic and resolve duplicate ids).
+                e.stopPropagation();
+                const url = location.href.split('#')[0] + '#' + headingId;
+                const flash = function() {
+                    perma.classList.remove('copied');
+                    // Force reflow so the animation restarts on rapid clicks.
+                    void perma.offsetWidth;
+                    perma.classList.add('copied');
+                    setTimeout(function() { perma.classList.remove('copied'); }, 1400);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(url).then(flash).catch(function() { fallbackCopy(url, flash); });
+                } else {
+                    fallbackCopy(url, flash);
+                }
+                history.replaceState(null, '', '#' + headingId);
+                scrollToTarget(h);
+            });
+            h.appendChild(perma);
+        }
         const level = h.tagName.substring(1);
         const li = document.createElement('li');
         const a = document.createElement('a');
         a.href = '#' + h.id;
-        a.textContent = h.textContent;
+        a.textContent = title;
         a.className = 'nav-h' + level;
-        a.title = h.textContent;
+        a.title = title;
         a.dataset.headingId = h.id;
         a.addEventListener('click', function(e) {
             e.preventDefault();
@@ -43466,13 +43942,23 @@ function buildToc(panelIdx) {
     updateScrollSpy();
 }
 
+/* Single rAF-throttled scroll handler drives scroll-spy, the reading-progress
+   bar and the back-to-top button -- one listener doing all the work keeps
+   scrolling smooth (no extra runtime over the original two listeners). */
 let spyRaf = null;
 function updateScrollSpy() {
     if (spyRaf) return;
     spyRaf = requestAnimationFrame(() => {
         spyRaf = null;
-        if (currentTocHeadings.length === 0) return;
         const scrollY = window.scrollY;
+
+        // Reading progress + back-to-top (run regardless of TOC contents).
+        const max = document.documentElement.scrollHeight - window.innerHeight;
+        const pct = max > 0 ? Math.min(100, (scrollY / max) * 100) : 0;
+        if (readProgress) readProgress.style.width = pct + '%';
+        if (toTopBtn) toTopBtn.classList.toggle('show', scrollY > 480);
+
+        if (currentTocHeadings.length === 0) return;
         const offset = 80;
         let activeEntry = currentTocHeadings[0];
         for (const entry of currentTocHeadings) {
@@ -43495,8 +43981,6 @@ function updateScrollSpy() {
     });
 }
 
-window.addEventListener('scroll', updateScrollSpy, { passive: true });
-
 /* ───── iOS-style condensing navbar (hide on scroll down, show on scroll up) ───── */
 function updateNavCondense() {
     const y = window.scrollY;
@@ -43512,7 +43996,18 @@ function updateNavCondense() {
     }
     navLastY = y;
 }
-window.addEventListener('scroll', updateNavCondense, { passive: true });
+
+/* One scroll listener for everything (was two). */
+window.addEventListener('scroll', function () {
+    updateNavCondense();
+    updateScrollSpy();
+}, { passive: true });
+
+if (toTopBtn) {
+    toTopBtn.addEventListener('click', function () {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+}
 
 const tocSidebar = document.getElementById('tocSidebar');
 const tocToggle = document.getElementById('tocToggle');
@@ -43524,6 +44019,7 @@ function toggleSidebar() {
         tocSidebar.classList.add('collapsed');
         document.body.classList.add('toc-collapsed');
     }
+    LS.set('doc-sidebar', collapsed ? 'closed' : 'open');
 }
 
 function toggleToc() {
@@ -43533,6 +44029,7 @@ function toggleToc() {
         sidebarNav.classList.add('collapsed');
         document.body.classList.add('sidebar-collapsed');
     }
+    LS.set('doc-toc', collapsed ? 'closed' : 'open');
 }
 
 sidebarToggle.addEventListener('click', toggleSidebar);
@@ -43667,6 +44164,19 @@ document.addEventListener('click', function(e) {
 /* ───── Startup ───── */
 /* - Nagesh N Nazare - */
 
+// Restore persisted sidebar / TOC open state (only on desktop, where the
+// drawers don't overlay the content).
+if (window.innerWidth > 1024) {
+    if (LS.get('doc-sidebar') === 'open') {
+        sidebarNav.classList.remove('collapsed');
+        document.body.classList.remove('sidebar-collapsed');
+    }
+    if (LS.get('doc-toc') === 'open') {
+        tocSidebar.classList.remove('collapsed');
+        document.body.classList.remove('toc-collapsed');
+    }
+}
+
 const hash = location.hash || '';
 const tabMatch = hash.match(/^#tab-(\d+)$/);
 if (tabMatch) {
@@ -43689,7 +44199,17 @@ if (tabMatch) {
         activateTab(0);
     }
 } else {
-    activateTab(0);
+    // No explicit target: resume the last-read document + scroll position.
+    const lastIdx = parseInt(LS.get('doc-last-idx'), 10);
+    const lastY = parseInt(LS.get('doc-last-y'), 10);
+    if (!isNaN(lastIdx) && lastIdx >= 0 && lastIdx < TAB_DATA.length) {
+        activateTab(lastIdx, false);
+        if (!isNaN(lastY) && lastY > 0) {
+            requestAnimationFrame(() => window.scrollTo({ top: lastY, behavior: 'auto' }));
+        }
+    } else {
+        activateTab(0);
+    }
 }
 </script>
 
