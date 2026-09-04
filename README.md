@@ -141,26 +141,6 @@ spells out the full order.
 
 ---
 
-## Repository layout
-
-```
-how-to-stl/
-├── README.md                 ← you are here (project hub)
-├── docs/README.md            ← cross-cutting concepts & decision guide
-├── Makefile                  ← build/run/test every module
-├── <component>/
-│   ├── <component>.hpp        ← implementation (header-only, diagrammed)
-│   ├── <component>_example.cpp← runnable example tour
-│   └── README.md              ← 12-section deep dive
-├── tests/                    ← one test suite per component
-└── data_structures/          ← companion: classic DS&A from scratch
-    ├── README.md             ← catalog + complexity cheat sheet
-    ├── Makefile              ← build/run every demo
-    └── <structure>/          ← <structure>.hpp + <structure>.cpp + README.md
-```
-
----
-
 ## A note on scope
 
 These implementations are written for **clarity over completeness**. They mirror
