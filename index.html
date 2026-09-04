@@ -2224,6 +2224,10 @@ body[data-scheme="highcontrast"][data-theme="light"] .tab-content pre code.pygco
 }
 .tab-content blockquote p:first-child { margin-top: 0; }
 .tab-content blockquote p:last-child { margin-bottom: 0; }
+.tab-content blockquote > .code-wrap:first-child,
+.tab-content blockquote > pre:first-child { margin-top: 0; }
+.tab-content blockquote > .code-wrap:last-child,
+.tab-content blockquote > pre:last-child { margin-bottom: 0; }
 
 /* === Responsive === */
 
@@ -2355,11 +2359,96 @@ body[data-scheme="highcontrast"][data-theme="light"] .tab-content pre code.pygco
     .tab-content .code-wrap:hover .code-lang-label { opacity: 1; }
 }
 
+/* === Footer credit === */
+.page-credit-wrap {
+    position: fixed;
+    left: 18px;
+    right: 18px;
+    bottom: 16px;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    pointer-events: none;
+}
+.page-credit-wrap > * {
+    pointer-events: auto;
+}
+.page-credit-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 36px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border-main);
+    background: color-mix(in srgb, var(--bg-sidebar) 82%, transparent);
+    color: var(--accent);
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    backdrop-filter: blur(10px) saturate(140%);
+    -webkit-backdrop-filter: blur(10px) saturate(140%);
+    box-shadow: var(--shadow-sm);
+    opacity: 0;
+    transform: translateY(18px) scale(0.96);
+    pointer-events: none;
+    transition: opacity 0.28s ease, transform 0.28s ease, border-color 0.2s ease, color 0.2s ease;
+}
+.page-credit-badge.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+}
+.page-credit-badge:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+.page-credit {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border-main);
+    background: color-mix(in srgb, var(--bg-sidebar) 82%, transparent);
+    color: var(--text-secondary);
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    backdrop-filter: blur(10px) saturate(140%);
+    -webkit-backdrop-filter: blur(10px) saturate(140%);
+    box-shadow: var(--shadow-sm);
+    user-select: none;
+    opacity: 0;
+    transform: translateY(18px) scale(0.96);
+    pointer-events: none;
+    transition: opacity 0.28s ease, transform 0.28s ease, border-color 0.2s ease;
+}
+.page-credit.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+}
+.page-credit a {
+    color: var(--text-link);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+}
+.page-credit a:hover {
+    border-bottom-color: var(--text-link);
+    background: transparent;
+}
+.page-credit .heart {
+    color: #ff5f7a;
+    font-size: 12px;
+}
+
 /* === Print === */
 @media print {
     .header-bar, .sidebar-nav, .toc-sidebar, .sidebar-toggle, .to-top,
     .code-copy-btn, .heading-anchor, .doc-tools, .gjump-badge,
-    .code-lang-label { display: none !important; }
+    .code-lang-label, .page-credit { display: none !important; }
     /* Print every document, not just the active one. */
     .tab-content { display: block !important; page-break-after: always; }
     /* Never leave a section (or raw view) folded/hidden on paper. */
@@ -2476,9 +2565,16 @@ body[data-scheme="highcontrast"][data-theme="light"] .tab-content pre code.pygco
   </nav>
 </div>
 
+<div class="page-credit-wrap">
+  <a class="page-credit-badge" href="https://github.com/nageshnnazare/how-to-stl" target="_blank" rel="noopener noreferrer" aria-label="Open repository">nageshnnazare/how-to-stl</a>
+  <footer class="page-credit" id="pageCredit" aria-label="Generated with love from this repo">
+    <span>Stitched with <span class="heart" aria-label="love">❤</span> using <a href="https://github.com/nageshnnazare/htmler.sh" target="_blank" rel="noopener noreferrer">nageshnnazare/htmler.sh</a></span>
+  </footer>
+</div>
+
 <script>
 const TAB_DATA = [
-  { name: `1. README`, path: `README.md`, dir: ``, words: 894, mins: 4, body: `<h1 id="how-to-stl--the-c-standard-library-rebuilt-from-scratch-to-learn-how-it-works">how-to-stl — The C++ Standard Library, Rebuilt from Scratch to Learn How It Works<\/h1>
+  { name: `1. README`, path: `README.md`, dir: ``, words: 809, mins: 4, body: `<h1 id="how-to-stl--the-c-standard-library-rebuilt-from-scratch-to-learn-how-it-works">how-to-stl — The C++ Standard Library, Rebuilt from Scratch to Learn How It Works<\/h1>
 <p>This repository reimplements <strong>24 C++ standard-library components<\/strong> — every major
 container, both smart pointers, and four systems-level building blocks — in clean,
 heavily-commented, header-only C++. It is a <em>teaching<\/em> codebase: every header
@@ -2744,22 +2840,6 @@ pointers, then the tree- and hash-based containers. The
 <a href="docs/README.md#6-suggested-learning-path">learning path in the concepts guide<\/a>
 spells out the full order.<\/p>
 <hr />
-<\/div><\/details><details class="sec-fold" open><summary class="sec-summary"><h2 id="repository-layout">Repository layout<\/h2><\/summary><div class="sec-body">
-<pre><code class="pygcode">how-to-stl/
-├── README.md                 ← you are here (project hub)
-├── docs/README.md            ← cross-cutting concepts &amp; decision guide
-├── Makefile                  ← build/run/test every module
-├── &lt;component&gt;/
-│   ├── &lt;component&gt;.hpp        ← implementation (header-only, diagrammed)
-│   ├── &lt;component&gt;_example.cpp← runnable example tour
-│   └── README.md              ← 12-section deep dive
-├── tests/                    ← one test suite per component
-└── data_structures/          ← companion: classic DS&amp;A from scratch
-    ├── README.md             ← catalog + complexity cheat sheet
-    ├── Makefile              ← build/run every demo
-    └── &lt;structure&gt;/          ← &lt;structure&gt;.hpp + &lt;structure&gt;.cpp + README.md
-<\/code><\/pre>
-<hr />
 <\/div><\/details><details class="sec-fold" open><summary class="sec-summary"><h2 id="a-note-on-scope">A note on scope<\/h2><\/summary><div class="sec-body">
 <p>These implementations are written for <strong>clarity over completeness<\/strong>. They mirror
 the real standard library&rsquo;s data structures, complexity, and exception behaviour,
@@ -2910,26 +2990,6 @@ A good beginner path is \`array → vector → string → list → deque\`, then
 pointers, then the tree- and hash-based containers. The
 [learning path in the concepts guide](docs/README.md#6-suggested-learning-path)
 spells out the full order.
-
----
-
-## Repository layout
-
-\`\`\`
-how-to-stl/
-├── README.md                 ← you are here (project hub)
-├── docs/README.md            ← cross-cutting concepts & decision guide
-├── Makefile                  ← build/run/test every module
-├── <component>/
-│   ├── <component>.hpp        ← implementation (header-only, diagrammed)
-│   ├── <component>_example.cpp← runnable example tour
-│   └── README.md              ← 12-section deep dive
-├── tests/                    ← one test suite per component
-└── data_structures/          ← companion: classic DS&A from scratch
-    ├── README.md             ← catalog + complexity cheat sheet
-    ├── Makefile              ← build/run every demo
-    └── <structure>/          ← <structure>.hpp + <structure>.cpp + README.md
-\`\`\`
 
 ---
 
@@ -51664,7 +51724,21 @@ const docSelect = document.getElementById('docSelect');
 const docList = document.getElementById('docList');
 const tabPanels = document.getElementById('tabPanels');
 const navDocTitle = document.getElementById('navDocTitle');
+const pageCredit = document.getElementById('pageCredit');
+const pageCreditBadge = document.querySelector('.page-credit-badge');
 let navLastY = 0;
+
+function updatePageCredit() {
+    const scrollable = document.documentElement.scrollHeight - window.innerHeight;
+    const nearEnd = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 24;
+    const shouldShow = nearEnd || scrollable <= 24;
+    if (pageCredit) pageCredit.classList.toggle('visible', shouldShow);
+    if (pageCreditBadge) pageCreditBadge.classList.toggle('visible', shouldShow);
+}
+window.addEventListener('scroll', updatePageCredit, { passive: true });
+window.addEventListener('resize', updatePageCredit);
+window.addEventListener('load', updatePageCredit);
+updatePageCredit();
 
 // Prettify function in JS (matching Python's prettify)
 function prettify(component) {
